@@ -241,14 +241,14 @@ local function main()
 		local mt = { }
 		
 		-- Reverse maps to find item object instances
-		local by_id = { }
-		local by_name = { }
-		local by_category = { }
+		local by_id, by_name, by_category = { }, { }, { }
+		
+		local category_by_item = { }
 		
 		-- @param [table] self Implicit Item instance
 		-- @return [str] Category in which the item is classified as
 		local function category(self)
-			return by_category[self]
+			return category_by_item[self]
 		end
 		
 		-- @param [str] item_name Name of the item, case-insensitive
@@ -282,77 +282,184 @@ local function main()
 			else return Item[key] end
 		end
 		
-		local function init_item_db()
-			-- Clever workaround 
-			setmetatable(by_category, { __index = function() return { } end })
-		end
+		local raw_items = {
+			["Flask"] = {
+				Item:new(13510, 17626), -- Flask of the Titans
+				Item:new(13511, 17627), -- Flask of Distilled Wisdom
+				Item:new(13512, 17628), -- Flask of Supreme Power
+				Item:new(13513, 17629), -- Flask of Chromatic Resistance
+				Item:new(13506), -- Flask of Petrification
+			},
+			["Protection"] = {
+				Item:new(13461, 17549), -- Greater Arcane Protection Potion
+				Item:new(13457, 17543), -- Greater Fire Protection Potion
+				Item:new(13456, 17544), -- Greater Frost Protection Potion
+				Item:new(13458, 17546), -- Greater Nature Protection Potion
+				Item:new(13459, 17548), -- Greater Shadow Protetion Potion
+				Item:new(13460, 17545), -- Greater Holy Protection Potion
+				Item:new(6052), -- Nature Protection Potion
+				Item:new(6050), -- Frost Protection Potion
+				Item:new(6049), -- Fire Protection Potion
+				Item:new(6048), -- Shadow Protection Potion
+				Item:new(6051), -- Holy Protection Potion
+				Item:new(4376), -- Flame Deflector
+				Item:new(4386), -- Ice Deflector
+			},
+			["Elixir"] = {
+				Item:new(13445, 11348), -- Elixir of Superior Defense
+				Item:new(20004, 24361), -- Major Troll's Blood Potion
+				Item:new(3825, 3593), -- Elixir of Fortitude
+				Item:new(13452, 17538), -- Elixir of the Mongoose
+				Item:new(20007, 24363), -- Mageblood Potion
+				Item:new(9206, 11405), -- Elixir of Giants
+				Item:new(12820, 17038), -- Winterfall Firewater
+				Item:new(9088, 11371), -- Gift of Arthas
+				Item:new(13454, 17539), -- Greater Arcane Elixir
+				Item:new(9264, 11474), -- Elixir of Shadow Power
+				Item:new(21546, 26276), -- Elixir of Greater Firepower
+				Item:new(17708, 21920), -- Elixir of Frost Power
+				Item:new(1177, 673), -- Oil of Olaf
+				Item:new(23211, 29334), -- Toasted Smorc
+				Item:new(23326, 29333), -- Midsummer Sausage
+				Item:new(23435, 29335), -- Elderberry Pie
+				Item:new(23327, 29332), -- Fire-toasted Bun
+				Item:new(22239, 27722), -- Sweet Surprise
+				Item:new(22237, 27723), -- Dark Desire
+				Item:new(22236, 27720), -- Buttermilk Delight
+				Item:new(22238, 27721), -- Very Berry Cream
+			},
+			["Juju"] = {
+				Item:new(12457, 16325), -- Juju Chill
+				Item:new(12460, 16329), -- Juju Might
+				Item:new(12450), -- Juju Flurry
+				Item:new(12459), -- Juju Escape
+				Item:new(12455, 16326), -- Juju Ember
+				Item:new(12458, 16327), -- Juju Guile
+				Item:new(12451, 16323), -- Juju Power
+			},
+			["Combat"] = {
+				Item:new(13446), -- Major Healing Potion
+				Item:new(13444), -- Major Mana Potion
+				Item:new(18253), -- Major Rejuvenation Potion
+				Item:new(9144), -- Wildvine Potion
+				Item:new(18841), -- Combat Mana Potion
+				Item:new(13443), -- Superior Mana Potion
+				Item:new(13442), -- Mighty Rage Potion
+				Item:new(3387), -- Limited Invulnerability Potion
+				Item:new(5634), -- Free Action Potion
+				Item:new(20008), -- Living Action Potion
+				Item:new(20520), -- Dark Rune
+				Item:new(12662), -- Demonic Rune
+				Item:new(11952), -- Night Dragon's Breath
+				Item:new(11951), -- Whipper Root Tuber
+				Item:new(7676), -- Thistle Tea
+				Item:new(16023), -- Masterwork Target Dummy
+				Item:new(4392), -- Advanced Target Dummy
+				Item:new(14530), -- Heavy Runecloth Bandage
+				Item:new(1322), -- Fishliver Oil
+				Item:new(2459), -- Swiftness Potion
+				Item:new(13455, 17540), -- Greater Stoneshield Potion
+				Item:new(20002), -- Greater Dreamless Sleep Potion
+				Item:new(12190), -- Dreamless Sleep Potion
+			},
+			["Cleanse"] = {
+				Item:new(3386), -- Elixir of Poison Resistance
+				Item:new(19440), -- Powerful Anti-Venom
+				Item:new(2633), -- Jungle Remedy
+				Item:new(6452), -- Anti-Venom
+				Item:new(6453), -- Strong Anti-Venom
+				Item:new(9030), -- Restorative Potion
+				Item:new(9322), -- Undamaged Venom Sac
+				Item:new(13462), -- Purification Potion
+				Item:new(19183), -- Hourglass Sand
+			},
+			["Un'goro"] = {
+				Item:new(11567, 15279), -- Crystal Spire
+				Item:new(11563, 15231), -- Crystal Force
+				Item:new(11566), -- Crystal Charge
+				Item:new(11562), -- Crystal Restore
+				Item:new(11564, 15233), -- Crystal Ward
+				Item:new(11565), -- Crystal Yield
+			},
+			["Misc"] = {
+				Item:new(5206, 5665), -- Bogling Root
+				Item:new(18297), -- Thornling Seed
+				Item:new(8529), -- Noggenfogger Elixir
+				Item:new(9172), -- Invisibility Potion
+				Item:new(3823), -- Lesser Invisibility Potion
+				Item:new(6372), -- Swim Speed Potion
+				Item:new(21519), -- Mistletoe
+				Item:new(184937), -- Chronoboon Displacer
+				Item:new(12384), -- Cache of Mau'ari
+				Item:new(21321), -- Red Qiraji Resonating Crystal
+				Item:new(21324), -- Yellow Qiraji Resonating Crystal
+				Item:new(21323), -- Green Qiraji Resonating Crystal
+				Item:new(21218), -- Blue Qiraji Resonating Crystal
+				Item:new(22754), -- Eternal Quintessence
+				Item:new(17333), -- Aqual Quintessence
+			},
+			["Enhancement"] = {
+				Item:new(3829), -- Frost Oil
+				Item:new(3824), -- Shadow Oil
+				Item:new(20749), -- Brilliant Wizard Oil
+				Item:new(20748), -- Brilliant Mana Oil
+				Item:new(23123), -- Blessed Wizard Oil
+				Item:new(23122), -- Consecrated Sharpening Stone
+				Item:new(18262), -- Elemental Sharpening Stone
+				Item:new(12404), -- Dense Sharpening Stone
+				Item:new(12643), -- Dense Weightstone
+			},
+			["Explosive"] = {
+				Item:new(8956), -- Oil of Immolation
+				Item:new(13180), -- Stratholme Holy Water
+				Item:new(10646), -- Goblin Sapper Charge
+				Item:new(18641), -- Dense Dynamite
+				Item:new(15993), -- Thorium Grenade
+				Item:new(4390), -- Iron Grenade
+				Item:new(16040), -- Arcane Bomb
+			},
+			["Unique"] = {
+				Item:new(8410, 10667), -- R.O.I.D.S.
+				Item:new(8412, 10669), -- Ground Scorpok Assay
+				Item:new(8423, 10692), -- Cerebral Cortex Compound
+				Item:new(8424, 10693), -- Gizzard Gum
+				Item:new(8411, 10668), -- Lung Juice Cocktail
+				Item:new(20079, 24382), -- Spirit of Zanza
+				Item:new(20080, 24417), -- Sheen of Zanza
+				Item:new(20081, 24383), -- Swiftness of Zanza
+				Item:new(184938), -- Supercharged Chronoboon Displacer
+			},
+			["Ammo"] = {
+				Item:new(12654), -- Doomshot
+				Item:new(13377), -- Miniature Cannon Balls
+				Item:new(11630), -- Rockshard Pellets
+				Item:new(19316), -- Ice Threaded Arrow
+				Item:new(19317), -- Ice Threaded Bullet
+				Item:new(18042), -- Thorium Headed Arrow
+				Item:new(15997), -- Thorium Shells
+			},
+			["Food"] = {
+				Item:new(13928, 18192), -- Grilled Squid
+				Item:new(20452, 24799), -- Smoked Desert Dumplings
+				Item:new(13931, 18194), -- Nightfin Soup
+				Item:new(18254, 22730), -- Runn Tum Tuber Surprise
+				Item:new(21023, 25661), -- Dirge's Kickin' Chimaerok Chops
+				Item:new(13813, 18141), -- Blessed Sunfruit Juice
+				Item:new(13810, 18125), -- Blessed Sunfruit
+				Item:new(18284, 22790), -- Kreeg's Stout Beatdown
+				Item:new(18269, 22789), -- Gordok Green Grog
+				Item:new(21151, 25804), -- Rumsey Rum Black Label
+				Item:new(13724), -- Enriched Manna Biscuit
+				Item:new(19301), -- Alterac Manna Biscuit
+			},
+			["Equipment"] = {
+				Item:new(15138), -- Onyxia Scale Cloak
+				Item:new(16309), -- Drakefire Amulet
+				Item:new(810), -- Hammer of the Northern Wind
+				Item:new(10761), -- Coldrage Dagger
+			}
+		}
 	end)()
-	
-	local CONSUMABLE_IDS = {
-		
-	}
-	
-	local CONSUME_AURAS = {
-		[13510] = 17626, -- Flask of the Titans
-		[13511] = 17627, -- Flask of Distilled Wisdom
-		[13512] = 17628, -- Flask of Supreme Power
-		[13513] = 17629, -- Flask of Chromatic Resistance
-		[13461] = 17549, -- Greater Arcane Protection Potion
-		[13457] = 17543, -- Greater Fire Protection Potion
-		[13456] = 17544, -- Greater Frost Protection Potion
-		[13458] = 17546, -- Greater Nature Protection Potion
-		[13459] = 17548, -- Greater Shadow Protetion Potion
-		[13460] = 17545, -- Greater Holy Protection Potion
-		[13445] = 11348, -- Elixir of Superior Defense
-		[20004] = 24361, -- Major Troll's Blood Potion
-		[3825] = 3593, -- Elixir of Fortitude
-		[13452] = 17538, -- Elixir of the Mongoose
-		[20007] = 24363, -- Mageblood Potion
-		[9206] = 11405, -- Elixir of Giants
-		[12820] = 17038, -- Winterfall Firewater
-		[9088] = 11371, -- Gift of Arthas
-		[13454] = 17539, -- Greater Arcane Elixir
-		[9264] = 11474, -- Elixir of Shadow Power
-		[21546] = 26276, -- Elixir of Greater Firepower
-		[17708] = 21920, -- Elixir of Frost Power
-		[1177] = 673, -- Oil of Olaf
-		[23211] = 29334, -- Toasted Smorc
-		[23326] = 29333, -- Midsummer Sausage
-		[23435] = 29335, -- Elderberry Pie
-		[23327] = 29332, -- Fire-toasted Bun
-		[22239] = 27722, -- Sweet Surprise
-		[22237] = 27723, -- Dark Desire
-		[22236] = 27720, -- Buttermilk Delight
-		[22238] = 27721, -- Very Berry Cream
-		[12457] = 16325, -- Juju Chill
-		[12460] = 16329, -- Juju Might
-		[12455] = 16326, -- Juju Ember
-		[12458] = 16327, -- Juju Guile
-		[12451] = 16323, -- Juju Power
-		[13455] = 17540, -- Greater Stoneshield Potion
-		[11567] = 15279, -- Crystal Spire
-		[11563] = 15231, -- Crystal Force
-		[11564] = 15233, -- Crystal Ward
-		[5206] = 5665, -- Bogling Root
-		[8410] = 10667, -- R.O.I.D.S.
-		[8412] = 10669, -- Ground Scorpok Assay
-		[8423] = 10692, -- Cerebral Cortex Compound
-		[8424] = 10693, -- Gizzard Gum
-		[8411] = 10668, -- Lung Juice Cocktail
-		[20079] = 24382, -- Spirit of Zanza
-		[20080] = 24417, -- Sheen of Zanza
-		[20081] = 24383, -- Swiftness of Zanza
-		[13928] = 18192, -- Grilled Squid
-		[20452] = 24799, -- Smoked Desert Dumplings
-		[13931] = 18194, -- Nightfin Soup
-		[18254] = 22730, -- Runn Tum Tuber Surprise
-		[21023] = 25661, -- Dirge's Kickin' Chimaerok Chops
-		[13813] = 18141, -- Blessed Sunfruit Juice
-		[13810] = 18125, -- Blessed Sunfruit
-		[18284] = 22790, -- Kreeg's Stout Beatdown
-		[18269] = 22789, -- Gordok Green Grog
-		[21151] = 25804, -- Rumsey Rum Black Label
-	}
 	
 	-- Map of [item_id -> tag]
 	local tag_by_item_id = (function()
