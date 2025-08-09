@@ -245,6 +245,9 @@ local function main()
 		
 		local category_by_item = { }
 		
+		-- Holds item IDs which have yet to be cached
+		local pending_cache_ids = { }
+		
 		-- @param [table] self Implicit Item instance
 		-- @return [str] Category in which the item is classified as
 		local function category(self)
@@ -267,6 +270,8 @@ local function main()
 		function Item:new(item_id, spell_id)
 			local obj = { item_id = item_id, spell_id = spell_id }
 			by_id[item_id] = obj -- Allow reverse lookups
+			if not item_cached(item_id) then
+				pending_cache_ids[item_id] = true end
 			return setmetatable(obj, mt)
 		end
 		
@@ -282,7 +287,48 @@ local function main()
 			else return Item[key] end
 		end
 		
-		local raw_items = {
+		-- Sorts each category by name & maps names->items
+		local function organize_names(items)
+			local names = mapper(items, function(_, i)
+				local name = lower((GetItemInfo(i)))
+				by_name[name] = i
+				return i, name
+			end)
+			sort(items, function(a, b)
+				return names[a] < names[b] end)
+		end
+		
+		-- Groups items into categories & enables by_name lookups
+		local function build_database()
+			setmetatable(by_category, { __index = function() return { } end })
+			for i, category in pairs(category_by_item) do
+				insert(by_category[category], i) end
+			for _, items in pairs(setmetatable(by_category, nil)) do
+				organize_names(items) end
+		end
+		
+		-- @return [bool] True if the database has all items cached
+		Item.ready = (function(strategy)
+			strategy = function()
+				local iter, tbl, key = pairs(pending_cache_ids)
+				local k, v = iter(tbl, nil)
+				if k == nil then -- No items remain uncached
+					build_database()
+					strategy = function() return true end
+					return true
+				end
+				
+				repeat -- Loop manually from 2nd pairing
+					k, v = iter(tbl, k)
+					cache_item(k) -- Request item data from the server
+				until k == nil
+				return false
+			end
+			
+			return function() return strategy() end
+		end)()
+		
+		for category, items in pairs({ -- Init database
 			["Flask"] = {
 				Item:new(13510, 17626), -- Flask of the Titans
 				Item:new(13511, 17627), -- Flask of Distilled Wisdom
@@ -458,7 +504,12 @@ local function main()
 				Item:new(810), -- Hammer of the Northern Wind
 				Item:new(10761), -- Coldrage Dagger
 			}
-		}
+		}) do
+			for _, i in ipairs(items) do
+				category_by_item[category] = i end
+		end
+		
+		return Item
 	end)()
 	
 	-- Map of [item_id -> tag]
