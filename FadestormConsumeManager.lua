@@ -243,7 +243,7 @@ local function main()
 		-- Reverse maps to find item object instances
 		local by_id, by_name, by_category = { }, { }, { }
 		
-		local category_by_item = { }
+		local category_by_item, categories = { }, { }
 		
 		-- Holds item IDs which have yet to be cached
 		local pending_cache_ids = { }
@@ -275,6 +275,43 @@ local function main()
 			return setmetatable(obj, mt)
 		end
 		
+		-- @return [string] Name of the item
+		-- @return [string] In-game item hyperlink
+		-- @return [string] In-game item icon file path
+		function Item:get_info()
+			--[[
+			-- 01: itemName, 02: itemLink, 03: itemQuality, 04: itemLevel, 05: itemMinLevel, 06: itemType
+			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
+			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
+			]]--
+			local name, link, _, _, _, _, _, _, _, _, texture = GetItemInfo()
+			return name, link, texture
+		end
+		
+		-- Retrieves item counts for a specified item using TSM's API
+		local function get_tsm_item_counts(item_id)
+			local bag_count = GetItemCount(item_id)
+			local bank_count = GetItemCount(item_id, true) - bag_count
+			return bag_count, bank_count
+		end
+		
+		-- Retrieves item counts for a specified item using WoW's API
+		local function get_wow_item_counts(item_id)
+			local bag_count = GetItemCount(item_id)
+			local total = sum({ TSM_API.GetPlayerTotals("i:" .. tostring(item_id)) })
+			return bag_count, total - bag_count
+		end
+		
+		-- Ideally TSM is installed and we can get other character's info
+		local get_item_counts = (TSM and TSM_API and TSM_API.GetPlayerTotals)
+			and get_tsm_item_counts or get_wow_item_counts
+		
+		-- @return [int] Quantity of the item in the player's bags
+		-- @return [int] Quantity of the item outside of the player's bags
+		function Item:get_counts()
+			return get_item_counts(self.item_id)
+		end
+		
 		-- Override table for __index reference
 		local index_override = {
 			category = category
@@ -302,10 +339,27 @@ local function main()
 		local function build_database()
 			setmetatable(by_category, { __index = function() return { } end })
 			for i, category in pairs(category_by_item) do
-				insert(by_category[category], i) end
+				insert(by_category[category], i)
+				insert(categories, category)
+			end
 			for _, items in pairs(setmetatable(by_category, nil)) do
 				organize_names(items) end
+			sort(categories)
 		end
+		
+		-- @param [int] item_id In-game Item ID to check if cached, or to cache
+		-- @return [bool] true, if Item ID is cached
+		function Item.cache(item_id)
+			if item_cached(item_id) then
+				pending_cache_ids[item_ids] = nil
+				return true
+			end
+			cache_item(item_id)
+			return false
+		end
+		
+		-- Allows iteration over Item categories
+		Item.categories = categories
 		
 		-- @return [bool] True if the database has all items cached
 		Item.ready = (function(strategy)
@@ -512,86 +566,6 @@ local function main()
 		return Item
 	end)()
 	
-	-- Map of [item_id -> tag]
-	local tag_by_item_id = (function()
-		local mapped = { }
-		for tag, t in pairs(CONSUMABLE_IDS) do
-			for _, item_id in ipairs(t) do
-				mapped[item_id] = tag end
-		end
-		return mapped
-	end)()
-	
-	-- Items which have not been cached from the item server
-	local pending_item_ids = (function()
-		local pending = { }
-		for item_id in pairs(tag_by_item_id) do
-			if not item_cached(item_id) then
-				pending[item_id] = true end
-		end
-		return pending
-	end)()
-	
-	-- Requests all pending item information from the item server
-	local function query_pending_items()
-		for item_id in pairs(pending_item_ids) do
-			cache_item(item_id) end
-	end
-	
-	query_pending_items() -- Start initial item cache
-	
-	-- Constructs the item database, call only when all items are queried
-	local function build_database()
-		local db = { }
-		for item_id, tag in pairs(tag_by_item_id) do
-			-- 01 itemName
-			-- 02 itemLink
-			-- 03 itemQuality
-			-- 04 itemLevel
-			-- 05 itemMinLevel
-			-- 06 itemType
-			-- 07 itemSubType
-			-- 08 itemStackCount
-			-- 09 itemEquipLoc
-			-- 10 itemTexture
-			-- 11 sellPrice
-			-- 12 classID
-			-- 13 subclassID
-			-- 14 bindType
-			-- 15 expacID
-			-- 16 setID
-			-- 17 isCraftingReagent
-			local info = { GetItemInfo(item_id) }
-			local _, name = next(info)
-			db[lower(name)] = {
-				name = name,
-				link = info[2],
-				tag = tag,
-				texture = info[10],
-				id = item_id,
-			}
-		end
-		return db
-	end
-	
-	-- Retrieves the database, if all queried items are loaded
-	local get_db = (function()
-		local db, strategy
-		
-		local function identity() return db end
-		strategy = function()
-			-- No more pending network calls, package db
-			if next(pending_item_ids) == nil then
-				db = build_database()
-				strategy = identity
-				return db
-			-- Request missing items again
-			else query_pending_items() end
-		end
-		
-		return function() return strategy() end
-	end)()
-	
 	-- Creates a centered header divider with a title
 	local build_header = (function()
 		local HEADER_LENGTH, HEADER_CHAR = 45, "~"
@@ -641,26 +615,6 @@ local function main()
 	local function texture_to_icon(texture, width)
 		return format("|T%s:%d:%d|t", texture, width, width)
 	end
-	
-	-- return quantity of item_id in the user's bags
-	-- return quantity of item_id outside of the user's bags
-	local get_item_counts = (function()
-		-- If TSM lib not available, use WoW API route
-		if not TSM_API or not TSM_API.GetPlayerTotals then
-			return function(item_id)
-				local bag_count = GetItemCount(item_id)
-				local bank_count = GetItemCount(item_id, true) - bag_count
-				return bag_count, bank_count
-			end
-		end
-		
-		local GetPlayerTotals = TSM_API.GetPlayerTotals
-		return function(item_id)
-			local bag_count = GetItemCount(item_id)
-			local total = sum({ GetPlayerTotals("i:" .. tostring(item_id)) })
-			return bag_count, total - bag_count
-		end
-	end)()
 	
 	-- Token string to represent different states of a conusmable
 	local Token = (function()
@@ -801,6 +755,12 @@ local function main()
 	
 	-- Receives cached item information
 	local function handle_item_data(item_id, success)
+		if success then 
+			Item.cache(item_id)
+		elseif not Item.cache(item_id) then
+			Log.warn("failed to query item ID: " .. tostring(item_id))
+		end
+		
 		if success then
 			pending_item_ids[item_id] = nil
 		elseif pending_item_ids[item_id] ~= nil then
