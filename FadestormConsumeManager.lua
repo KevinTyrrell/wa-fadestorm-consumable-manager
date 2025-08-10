@@ -242,7 +242,6 @@ local function main()
 		
 		-- Reverse maps to find item object instances
 		local by_id, by_name, by_category = { }, { }, { }
-		
 		local category_by_item, categories = { }, { }
 		
 		-- Holds item IDs which have yet to be cached
@@ -566,22 +565,24 @@ local function main()
 		return Item
 	end)()
 	
-	-- Creates a centered header divider with a title
-	local build_header = (function()
-		local HEADER_LENGTH, HEADER_CHAR = 45, "~"
-		return function(title, len)
-			if title == nil or title == "" then
-				return s_duplicate(HEADER_CHAR, HEADER_LENGTH) end
-			len = len ~= nil and len or #title
-			local width = (HEADER_LENGTH - len - 2) / 2
-			local widthf = floor(width)
-			local section = s_duplicate(HEADER_CHAR, widthf)
-			if width == widthf then
-				return section .. " " .. title .. " " .. section
-			else
-				-- Append a header character in the case of odd sized headers
-				return section .. " " .. title .. " " .. section .. HEADER_CHAR
-			end
+	local Text = (function()
+		local Text = { }
+		
+		-- @param [str] title Title of the header
+		-- @param [int] length Total length of the header
+		-- @param [str] char Border character to be repeated
+		-- @return [str] Formatted header
+		function Text.header(title, length, char)
+			if title == nil then return s_duplicate(char, length) end
+			title = trim(title)
+			if title == "" then return s_duplicate(char, length) end
+			local t_len = #title + 2
+			local s_len = (length - t_len) / 2
+			local s_lenf = floor(s_len)
+			local section = s_duplicate(char, s_lenf)
+			if s_len == s_lenf then
+				return format("%s %s %s", section, title, section) end
+			return format("%s %s %s%s", section, title, section, char)
 		end
 	end)()
 	
