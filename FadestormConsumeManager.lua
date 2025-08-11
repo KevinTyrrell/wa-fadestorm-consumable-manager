@@ -202,30 +202,6 @@ local function main()
 		})
 	end)()
 	
-	----------------------------------------------------------------------
-    --------------------------- CUSTOM OPTIONS ---------------------------
-    ----------------------------------------------------------------------
-	
-	local function init_consume_config()
-		local quantity_by_name = { }
-		local _, active = next(aura_env.config.profiles)
-		if active ~= nil then
-			local consumes = active.consumes
-			for _, e in ipairs(consumes) do
-				local name = lower(trim(e.consume_name))
-				local quantity = e.req_quantity
-				quantity_by_name[name] = quantity
-			end
-		end
-		return quantity_by_name
-	end
-	
-	-- Map of [consume_name -> quantity_desired]
-	local quantity_by_name = init_consume_config()
-	
-	-- Percentage of max duration in which auras are considered low duration
-	local low_duration_thresh = aura_env.config.options.low_duration_thresh / 100
-	
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
     ----------------------------------------------------------------------
@@ -666,7 +642,7 @@ local function main()
 			CRITICAL = make_severity(Symbol("NO", Palette.RED), Symbol(">>", Palette.ORANGE))
 		}
 		
-		local function severity_by_buff(aura_id)
+		local function severity_by_buff(aura_id, low_duration_thresh)
 			local _, _, _, _, duration, expire_ts = WA_GetUnitBuff(PLAYER, aura_id)
 			-- Aura could not be found on the player's buffs
 			if duration == nil then return Severity.CRITICAL end
@@ -679,19 +655,22 @@ local function main()
 		-- Measures the severity of a consumable's remaining duration
 		-- Items that yield no buff always report STABLE
 		-- @param [table] item_ref Item instance to check aura duration of
+		-- @param [table] prefs Preference instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
-		function Severity:of_duration(item_ref)
+		function Severity:of_duration(item_ref, prefs)
 			local aura_id = item_ref.spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
-			return severity_by_buff(aura_id)
+			return severity_by_buff(aura_id, prefs.low_duration_thresh)
 		end
 		
 		-- Measures the severity of a consumable's remaining supply
 		-- If TSM is installed, supply of all your realm characters are considered
 		-- If TSM is not installed, supply of only bags and bank are considered
 		-- @param [table] item_ref Item instance to check quantity of
+		-- @param [table] prefs Preference instance for req quantities
 		-- @return [table] Severity instance, based on available supply
-		function Severity:of_quantity(item_ref, req_quantity)
+		function Severity:of_quantity(item_ref, prefs)
+			local req_quantity = prefs.quantity_by_item[item_ref]
 			local bags, elsewhere = item_ref:get_supply()
 			if bags >= req_quantity then
 				return Severity.STABLE end
@@ -711,24 +690,40 @@ local function main()
 		return Severity
 	end)()
 	
-	-- Constructs multi-line string report of all relevant consumes of this tag
-	local function build_tag_report(tag, consumes)
-		local color = colors_by_tag[tag]
-		local lines = { build_header(color(tag), #tag) }
+	----------------------------------------------------------------------
+    --------------------------- CUSTOM OPTIONS ---------------------------
+    ----------------------------------------------------------------------
+	
+	local Preferences = (function()
+		local Preferences = { }
+		local cfg = aura_env.config
 		
-		local sorted = sorter(consumes, function(k) return k.name end)
-		for _, consume in ipairs(sorted) do
-			local item_id = consume.id
-			local req_quantity = consumes[consume]
-			local qty_severity = severity_by_quantity(item_id, req_quantity)
-			local dur_severity = severity_by_duration(item_id)
-			local status = Token.build(qty_severity, dur_severity)
-			local line = texture_to_icon(consume.texture) .. consume.link
-			insert(lines, status .. line)
+		local function load_low_duration()
+			return cfg.options.low_duration_thresh / 100 end
+			
+		local function load_item_quantities()
+			local quantity_by_item = { }
+			local profile = select(2, next(cfg.profiles))
+			if profile ~= nil then
+				for _, grp in ipairs(profile.consumes) do
+					local name = lower(trim(grp.consume_name))
+					local item_ref = Item.by_name(name)
+					if item_ref ~= nil then
+						quantity_by_item[item_ref] = grp.req_quantity
+					else Log.info("User Config | Consumable DNE: " .. name) end
+				end
+			end
+			return quantity_by_item
 		end
 		
-		return concat(lines, "\n")
-	end
+		-- low_duration_thresh: %max duration to be considered 'low duration'
+		function Preferences:new()
+			local obj = { }
+			obj.low_duration_thresh = load_low_duration()
+			obj.quantity_by_item = load_item_quantities()
+			return obj
+		end
+	end)()
 
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
