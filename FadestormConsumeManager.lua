@@ -655,7 +655,7 @@ local function main()
 		-- Measures the severity of a consumable's remaining duration
 		-- Items that yield no buff always report STABLE
 		-- @param [table] item_ref Item instance to check aura duration of
-		-- @param [table] prefs Preference instance for low duration thresh
+		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item_ref, prefs)
 			local aura_id = item_ref.spell_id
@@ -667,7 +667,7 @@ local function main()
 		-- If TSM is installed, supply of all your realm characters are considered
 		-- If TSM is not installed, supply of only bags and bank are considered
 		-- @param [table] item_ref Item instance to check quantity of
-		-- @param [table] prefs Preference instance for req quantities
+		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item_ref, prefs)
 			local req_quantity = prefs.quantity_by_item[item_ref]
@@ -694,8 +694,8 @@ local function main()
     --------------------------- CUSTOM OPTIONS ---------------------------
     ----------------------------------------------------------------------
 	
-	local Preferences = (function()
-		local Preferences = { }
+	local Preferencess = (function()
+		local Preferencess = { }
 		local cfg = aura_env.config
 		
 		local function load_low_duration()
@@ -717,47 +717,52 @@ local function main()
 		end
 		
 		-- low_duration_thresh: %max duration to be considered 'low duration'
-		function Preferences:new()
+		function Preferencess:new()
 			local obj = { }
 			obj.low_duration_thresh = load_low_duration()
 			obj.quantity_by_item = load_item_quantities()
 			return obj
 		end
+		
+		-- This should only be called after Item.ready()
+		function Preferencess:get()
+			local prefs = self.prefs
+			if prefs == nil then
+				prefs = self:new()
+				self.prefs = prefs
+			end
+			return prefs
+		end
+		
+		return Preferencess
 	end)()
+	
+	--	aura_env
+	--		config
+	--			options (grp)
+	--				rules (grp)
+	--					enable (toggle)
+	--					predicates (grp)
+	--						negate (toggle)
+	--						condition (dropdown)
+	--							[1]: In Dungeon / Raid
+	--							[2]: In Rested Area
+	--							[3]: Item Yields Buff
+	--							[4]: Item In Inventory
 
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
     ----------------------------------------------------------------------
     
 	local function handle_fcm_show()
-		local db = get_db()
-		if db ~= nil then
-			-- Convert consumable names into consumable objects
-			local quantity_by_consume = mapper(quantity_by_name,
-				function(k, v)
-					local consume = db[k]
-					if consume == nil then
-						Log.info("user config, consumable DNE: " .. tostring(k)) end
-					return consume, v
-				end)
+		if Item.ready() then -- Ensure all item are cached
+			local prefs = Preferencess:get()
+			-- No consume preferences listed -- disable display
+			if next(prefs.quantity_by_item) == nil then return end
 			
-			-- Protection against empty/invalid consume list
-			if next(quantity_by_consume) == nil then return end
 			
-			local consumes_by_tag = grouper(quantity_by_consume,
-				function(k, v) return k.tag end)
-			local sorted_tags = sorter(consumes_by_tag, function(k) return k end)
 			
-			local reports = { }
-			for _, tag in ipairs(sorted_tags) do
-				local tag_report = build_tag_report(tag, consumes_by_tag[tag])
-				insert(reports, tag_report)
-			end
-			
-			aura_env.display = concat(reports, "\n")
-		else aura_env.display = PENDING_TEXT_DISPLAY end
-		
-		return true
+		end
 	end
 	
 	local function handle_fcm_hide()
