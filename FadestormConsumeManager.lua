@@ -616,13 +616,6 @@ local function main()
 			return color_map
 		end
 		
-		-- @param [table] color_filter List of header colors which should not be used
-		-- @return [string]
-		function Text:build(color_filter)
-			local header_colors = colors_by_header(self, color_filter)
-			
-		end
-		
 		-- @param [string] title Title of the header
 		-- @param [number] length Total length of the header
 		-- @param [string] char Border character to be repeated
@@ -640,36 +633,25 @@ local function main()
 			return format("%s %s %s%s", section, title, section, char)
 		end
 		
+		-- @param [table] color_filter List of header colors which should not be used
+		-- @return [string] Built text block
+		function Text:build(color_filter)
+			local header_colors = colors_by_header(self, color_filter)
+			local block_width = self.longest
+			local block = { }
+			for _, header in ipairs(self.header) do
+				local lines = self.lines_by_header[header]
+				header = header_colors[header](header)
+				insert(block, build_header(header, block_width, "~"))
+			end
+			return concat(block, "\n")
+		end
+		
 		function Text.inline_icon(texture, width)
 			return format("|T%s:%d:%d|t", texture, width, width)
 		end
-	end)()
-	
-	-- Display for when item information is pending from the server
-	local PENDING_TEXT_DISPLAY = (function()
-		local divider = build_header()
-		local pending = build_header("\(Waiting for Item IDs\)")
-		local refresh = build_header("Refresh Character Pane")
-		return divider .. "\n" .. pending .. "\n" .. refresh .. "\n" .. divider
-	end)()
-	
-	-- Map of [tag -> color]
-	local colors_by_tag = (function()
-		local c, keys, paired, i = copy(Palette), { }, { }, 0
-		-- Colors which should never be used for tag colors
-		local reserved = { "YELLOW", "CORAL", "GREEN", "WHITE", "RED", "ORANGE" }
-		for _, e in ipairs(reserved) do c[reserved] = nil end
 		
-		for e in pairs(c) do
-			insert(keys, e) end
-		sort(keys)
-		
-		for tag in pairs(CONSUMABLE_IDS) do
-			i = i + 1
-			paired[tag] = c[keys[i]]
-		end
-		
-		return paired
+		return Text
 	end)()
 	
 	-- Token string to represent different states of a conusmable
