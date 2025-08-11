@@ -248,23 +248,23 @@ local function main()
 		local pending_cache_ids = { }
 		
 		-- @param [table] self Implicit Item instance
-		-- @return [str] Category in which the item is classified as
+		-- @return [string] Category in which the item is classified as
 		local function category(self)
 			return category_by_item[self]
 		end
 		
-		-- @param [str] item_name Name of the item, case-insensitive
+		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil
 		function Item.by_name(item_name)
 			return by_name[lower(trim(item_name))] end
 		
-		-- @param [int] item_id In-game ID of the item
+		-- @param [number] item_id In-game ID of the item
 		-- @return [table] Corresponding Item instance, or nil
 		function Item.by_id(item_id)
 			return by_id[item_id] end
 		
-		-- @param [int] item_id In-game ID of the item
-		-- @param (optional) [int] spell_id In-game ID of the self-buff the item applies
+		-- @param [number] item_id In-game ID of the item
+		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
 		-- @return [table] Item instance
 		function Item:new(item_id, spell_id)
 			local obj = { item_id = item_id, spell_id = spell_id }
@@ -305,8 +305,8 @@ local function main()
 		local get_item_counts = (TSM and TSM_API and TSM_API.GetPlayerTotals)
 			and get_tsm_item_counts or get_wow_item_counts
 		
-		-- @return [int] Quantity of the item in the player's bags
-		-- @return [int] Quantity of the item outside of the player's bags
+		-- @return [number] Quantity of the item in the player's bags
+		-- @return [number] Quantity of the item outside of the player's bags
 		function Item:get_counts()
 			return get_item_counts(self.item_id)
 		end
@@ -346,7 +346,7 @@ local function main()
 			sort(categories)
 		end
 		
-		-- @param [int] item_id In-game Item ID to check if cached, or to cache
+		-- @param [number] item_id In-game Item ID to check if cached, or to cache
 		-- @return [bool] true, if Item ID is cached
 		function Item.cache(item_id)
 			if item_cached(item_id) then
@@ -567,12 +567,67 @@ local function main()
 	
 	local Text = (function()
 		local Text = { }
+		local mt = { __index = Text }
 		
-		-- @param [str] title Title of the header
-		-- @param [int] length Total length of the header
-		-- @param [str] char Border character to be repeated
-		-- @return [str] Formatted header
-		function Text.header(title, length, char)
+		function Text:new()
+			local obj = { }
+			obj.headers = { }
+			obj.lines_by_header = setmetatable({ },
+				{ __index = function() return { } end })
+			obj.longest = 0
+			return setmetatable(obj, mt)
+		end
+		
+		-- @param [string] title Centered text of this header
+		-- @param (optional) [number] length Override for the text length
+		-- @return [table] Builder instance
+		function Text:header(title, length)
+			if length == nil then length = #title end
+			self.longest = max(self.longest, length + 2)
+			insert(self.headers, title)
+			self.current = title
+			return self
+		end
+		
+		-- @param [string] line Text which is housed under the header
+		-- @param (optional) [number] length Override for the text length
+		-- @return [table] Builder instance
+		function Text:line(line, length)
+			if length == nil then length = #line end
+			self.longest = max(self.longest, length + 2)
+			insert(self.lines_by_header, self.current)
+		end
+		
+		-- Assigns a unique color to each header, with filter support
+		local function colors_by_header(instance, color_filter)
+			local filter = mapper(color_filter, function(_, c) return c, true end) -- Set
+			local color_keys = { }
+			for k, v in pairs(Palette) do
+				if filter[v] == nil then -- Color is allowed
+					insert(color_keys, k) end end
+			local num_headers = #instance.headers
+			-- Possible not enough colors left, failsafe protection
+			for i = 1, num_headers - #color_keys do
+				insert(color_keys, (next(Palette))) end
+			sort(color_keys) -- Sorted colors gives output a more predictable look
+			local color_map = { }
+			for i = 1, num_headers do
+				color_map[instance.headers[i]] = Palette[color_keys[i]] end
+			return color_map
+		end
+		
+		-- @param [table] color_filter List of header colors which should not be used
+		-- @return [string]
+		function Text:build(color_filter)
+			local header_colors = colors_by_header(self, color_filter)
+			
+		end
+		
+		-- @param [string] title Title of the header
+		-- @param [number] length Total length of the header
+		-- @param [string] char Border character to be repeated
+		-- @return [string] Formatted header
+		local function build_header(title, length, char)
 			if title == nil then return s_duplicate(char, length) end
 			title = trim(title)
 			if title == "" then return s_duplicate(char, length) end
@@ -583,6 +638,10 @@ local function main()
 			if s_len == s_lenf then
 				return format("%s %s %s", section, title, section) end
 			return format("%s %s %s%s", section, title, section, char)
+		end
+		
+		function Text.inline_icon(texture, width)
+			return format("|T%s:%d:%d|t", texture, width, width)
 		end
 	end)()
 	
@@ -612,10 +671,6 @@ local function main()
 		
 		return paired
 	end)()
-	
-	local function texture_to_icon(texture, width)
-		return format("|T%s:%d:%d|t", texture, width, width)
-	end
 	
 	-- Token string to represent different states of a conusmable
 	local Token = (function()
