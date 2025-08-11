@@ -113,12 +113,6 @@ local function main()
 		return s
 	end
 	
-	local function Class()
-		local cls = { }
-		cls.__index = cls
-		return setmetatable({ }, cls), cls
-	end
-	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
     ----------------------------------------------------------------------
@@ -307,7 +301,7 @@ local function main()
 		
 		-- @return [number] Quantity of the item in the player's bags
 		-- @return [number] Quantity of the item outside of the player's bags
-		function Item:get_counts()
+		function Item:get_supply()
 			return get_item_counts(self.item_id)
 		end
 		
@@ -654,84 +648,68 @@ local function main()
 		return Text
 	end)()
 	
-	-- Token string to represent different states of a conusmable
-	local Token = (function()
-		local Token = { }
-	
-		-- Colored component of a status marker
+	local Severity = (function()
 		local Symbol = (function()
-			local Symbol = Class()
-
-			function Symbol:new(code, color)
-				local obj = setmetatable({ }, self)
-				obj.code = code
-				obj.color = color
-				return obj
+			local function repr() return self.color(self.code) end
+			local symbol_mt = { __call = repr, __tostring = repr }
+			return function(code, color)
+				return setmetatable({ code = code, color = color }, symbol_mt)
 			end
-			
-			function Symbol:__call()
-				return self.color(self.code)
-			end
-			
-			function Symbol:__tostring()
-				return self.color(self.code)
-			end
-			
-			return Symbol
-		end)()
+		end)
 		
-		Token.Severity = {
-			WARNING = {
-				status = Symbol:new("+?", Palette.YELLOW),
-				marker = Symbol:new("<<", Palette.CORAL),
-			},
-			STABLE = {
-				status = Symbol:new("OK", Palette.GREEN),
-				marker = Symbol:new("--", Palette.WHITE),
-			},
-			CRITICAL = {
-				status = Symbol:new("NO", Palette.RED),
-				marker = Symbol:new(">>", Palette.ORANGE),
-			}
+		local function make_severity(status, marker)
+			return { status = status, marker = marker } end
+		
+		local Severity = {
+			STABLE = make_severity(Symbol("OK", Palette.GREEN), Symbol("--", Palette.WHITE)),
+			WARNING = make_severity(Symbol("+?", Palette.YELLOW), Symbol("<<", Palette.CORAL)),
+			CRITICAL = make_severity(Symbol("NO", Palette.RED), Symbol(">>", Palette.ORANGE))
 		}
 		
-		function Token.build(status, marker)
-			local s = status.status()
-			local m = marker.marker()
-			return format("%s %s %s", m, s, m)
+		local function severity_by_buff(aura_id)
+			local _, _, _, _, duration, expire_ts = WA_GetUnitBuff(PLAYER, aura_id)
+			-- Aura could not be found on the player's buffs
+			if duration == nil then return Severity.CRITICAL end
+			local remaining = expire_ts - GetTime()
+			if remaining / duration <= low_duration_thresh then
+				return Severity.WARNING end
+			return Severity.STABLE
 		end
 		
-		return Token
+		-- Measures the severity of a consumable's remaining duration
+		-- Items that yield no buff always report STABLE
+		-- @param [table] item_ref Item instance to check aura duration of
+		-- @return [table] Severity instance, based on remaining duration
+		function Severity:of_duration(item_ref)
+			local aura_id = item_ref.spell_id
+			if aura_id == nil then return self.STABLE end -- No duration => stable
+			return severity_by_buff(aura_id)
+		end
+		
+		-- Measures the severity of a consumable's remaining supply
+		-- If TSM is installed, supply of all your realm characters are considered
+		-- If TSM is not installed, supply of only bags and bank are considered
+		-- @param [table] item_ref Item instance to check quantity of
+		-- @return [table] Severity instance, based on available supply
+		function Severity:of_quantity(item_ref, req_quantity)
+			local bags, elsewhere = item_ref:get_supply()
+			if bags >= req_quantity then
+				return Severity.STABLE end
+			if bags + elsewhere >= req_quantity then
+				return Severity.WARNING end
+			return Severity.CRITICAL
+		end
+		
+		-- @param [table] status Severity to be applied to the status of the token
+		-- @param [table] marker Severity to be applied to the marker of the token
+		-- @return [string] Token signifying this severity combination
+		function Severity.token(status, marker)
+			marker = tostring(marker) -- avoid double-calling tostring
+			return format("%s %s %s", marker, status, marker)
+		end
+		
+		return Severity
 	end)()
-	
-	-- Determines a consumable aura's severity by remaining duration
-	local function severity_by_buff(aura_id)
-		local _, _, _, _, duration, expire_ts = WA_GetUnitBuff(PLAYER, aura_id)
-		-- Aura could not be found on the player's buffs
-		if duration == nil then return Token.Severity.CRITICAL end
-		local remaining = expire_ts - GetTime()
-		if remaining / duration <= low_duration_thresh then
-			return Token.Severity.WARNING end
-		return Token.Severity.STABLE
-	end
-	
-	-- Determines a consume's severity by remaining duration, if relevant
-	local function severity_by_duration(item_id)
-		local aura_id = CONSUME_AURAS[item_id]
-		-- If item has no concept of duration, then report stable
-		if aura_id == nil then return Token.Severity.STABLE end
-		return severity_by_buff(aura_id)
-	end
-	
-	-- Determines a consumable's severity by count in bags / bank / elsewhere
-	local function severity_by_quantity(item_id, req_quantity)
-		local count_bag, count_mia = get_item_counts(item_id)
-		if count_bag >= req_quantity then
-			return Token.Severity.STABLE end
-		if count_bag + count_mia >= req_quantity then
-			return Token.Severity.WARNING end
-		return Token.Severity.CRITICAL
-	end
 	
 	-- Constructs multi-line string report of all relevant consumes of this tag
 	local function build_tag_report(tag, consumes)
@@ -797,13 +775,6 @@ local function main()
 			Item.cache(item_id)
 		elseif not Item.cache(item_id) then
 			Log.warn("failed to query item ID: " .. tostring(item_id))
-		end
-		
-		if success then
-			pending_item_ids[item_id] = nil
-		elseif pending_item_ids[item_id] ~= nil then
-			Log.warn("failed to query item ID: " .. tostring(item_id))
-			cache_item(item_id)
 		end
 	end
     
