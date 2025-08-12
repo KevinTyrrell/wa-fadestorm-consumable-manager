@@ -113,6 +113,43 @@ local function main()
 		return s
 	end
 	
+	--[[
+	-- Tunnels into a table, allowing descending without repetiton
+	--
+	-- __call() -- Returns the table currently being explored
+	-- __index(key) -- Returns the value for current depth, or tunnels if table
+	]]--
+	local function Tunneler(tbl)
+		return setmetatable({ }, {
+			__index = function(tunneler, key)
+				local value = tbl[key]
+				if type(value) == "table" then
+					tbl = value -- Dig one layer
+					return tunneler
+				end
+				return value
+			end,
+			__call = function() return tbl end
+		})
+	end
+	
+	--[[
+	Consider separation of static & instance tables
+	
+	local function Class(static, proto)
+		proto = proto or {}
+		proto.__index = proto
+
+		static.__proto = proto
+
+		function static:new(o)
+			return setmetatable(o or {}, proto)
+		end
+
+		return static, proto
+	end
+	]]--
+	
 	-- @param [function] assigner [nil] function(e) where all enum pairs are put in param
 	-- @param (optional) [table] cls Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or cls param if provided
@@ -768,14 +805,18 @@ local function main()
 	local Rule = (function()
 		local Rule = { }
 		local mt = { 
-			__call = function(tbl, ...) return tbl:evaluate() end,
+			__call = function(tbl, ...)
+				for _, cond in ipairs(conditions) do
+					if cond(...) ~= true then return false end end
+				return true
+			end,
 			__index = Rule,
 		}
 		
 		function Rule:new(conditions)
 			return setmetatable({ conditions = conditions }, mt) end
-			
-		function Rule:
+		
+		return Rule
 	end)()
 	
 	----------------------------------------------------------------------
@@ -788,14 +829,12 @@ local function main()
 			__call = function(tbl, ...) return tbl:evaluate(...) end,
 		end
 		
-		local cfg = aura_env.config
-		
 		local function load_low_duration()
-			return cfg.options.low_duration_thresh / 100 end
+			return aura_env.config.options.low_duration_thresh / 100 end
 			
 		local function load_item_quantities()
 			local quantity_by_item = { }
-			local profile = select(2, next(cfg.profiles))
+			local profile = select(2, next(aura_env.config.profiles))
 			if profile ~= nil then
 				for _, grp in ipairs(profile.consumes) do
 					local name = lower(trim(grp.consume_name))
@@ -808,11 +847,28 @@ local function main()
 			return quantity_by_item
 		end
 		
+		local function load_rules()
+			local rules = { }
+			local tunnel = Tunneler(aura_env.config.options.rules)
+			for _, rule_grp in ipairs(tunnel()) do
+				if rule_grp.enable then -- Rule is active
+					local conds = { }
+					for _, pred_grp in ipairs(tunnel.predicates()) do
+						local dropdown = Predicate[pred_grp.condition]
+						insert(conds, Condition:new(dropdown, pred_grp.negate))
+					end
+					insert(rules, Rule:new(conds))
+				end
+			end
+			return rules
+		end
+		
 		-- low_duration_thresh: %max duration to be considered 'low duration'
 		function Preferencess:new()
 			local obj = { }
 			obj.low_duration_thresh = load_low_duration()
 			obj.quantity_by_item = load_item_quantities()
+			obj.rules = load_rules()
 			return obj
 		end
 		
@@ -828,19 +884,6 @@ local function main()
 		
 		return Preferencess
 	end)()
-	
-	--	aura_env
-	--		config
-	--			options (grp)
-	--				rules (grp)
-	--					enable (toggle)
-	--					predicates (grp)
-	--						negate (toggle)
-	--						condition (dropdown)
-	--							[1]: In Dungeon / Raid
-	--							[2]: In Rested Area
-	--							[3]: Item Yields Buff
-	--							[4]: Item In Inventory
 
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
