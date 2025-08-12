@@ -113,6 +113,23 @@ local function main()
 		return s
 	end
 	
+	-- @param [function] assigner [nil] function(e) where all enum pairs are put in param
+	-- @param (optional) [table] cls Class table to contain the constants, or nil to create
+	-- @return [table] Enum table, or cls param if provided
+	local function Enum(assigner, cls)
+		if cls == nil then cls = { } end
+		local ordinal = 1
+		local proxy = setmetatable({ }, {
+			__newindex = function(_, key, value)
+				rawset(cls, key, value)
+				rawset(cls, ordinal, value)
+				ordinal = ordinal + 1
+			end
+		}
+		assigner(proxy)
+		return cls
+	end
+	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
     ----------------------------------------------------------------------
@@ -688,6 +705,48 @@ local function main()
 		end
 		
 		return Severity
+	end)()
+	
+	--[[
+	Predicates
+	[1] | IN_DUNGEON_RAID: Returns true if the player is in a dungeon/raid
+	[2] | IN_RESTED_AREA: Returns true if the player is in a city/inn
+	[3] | ITEM_YIELDS_BUFF: Returns true if the item can apply a buff
+	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
+	]]--
+	local Predicate = (function()
+		local Predicate = { }
+		local mt = {
+			__call = function(tbl, ...)
+				return tbl:evaluate(...) end,
+			__tostring = function(tbl) return tbl.repr end,
+		end
+		
+		-- @param [string] repr String representation of the predicate
+		-- @param [function] Peforms an evaluation, [bool] function(item_ref)
+		function predicate:new(repr, evaluate)
+			return setmetatable({
+				repr = repr,
+				evaluate = evaluate
+			}, mt)
+		end
+		
+		return Enum(function(e)
+			-- Returns true if the player is inside of a dungeon or raid
+			e.IN_DUNGEON_RAID = (function()
+				local z_types = { party = true, raid = true, scenario = true }
+				return function()
+					return z_types[(select(2, GetInstanceInfo()))] ~= nil end
+			end)(),
+			-- Returns true if the player is currently in a city or inn
+			e.IN_RESTED_AREA = IsResting,
+			-- Returns true if the specified item has buffing capability
+			e.ITEM_YIELDS_BUFF = function(item_ref)
+				return item_ref.spell_id ~= nil end,
+			-- Returns true if at least one of the item is in the player's inventory
+			e.ITEM_IN_INVENTORY = function(item_ref)
+				return GetItemCount(item_ref.item_id) > 0 end,
+		end, Predicate)
 	end)()
 	
 	----------------------------------------------------------------------
