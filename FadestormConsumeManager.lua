@@ -717,14 +717,14 @@ local function main()
 	local Predicate = (function()
 		local Predicate = { }
 		local mt = {
-			__call = function(tbl, ...)
-				return tbl:evaluate(...) end,
+			__call = function(tbl, ...) return tbl.evaluate(...) end,
 			__tostring = function(tbl) return tbl.repr end,
 		end
 		
 		-- @param [string] repr String representation of the predicate
 		-- @param [function] Peforms an evaluation, [bool] function(item_ref)
-		function predicate:new(repr, evaluate)
+		-- @return [table] Predicate instance
+		function Predicate:new(repr, evaluate)
 			return setmetatable({
 				repr = repr,
 				evaluate = evaluate
@@ -749,12 +749,45 @@ local function main()
 		end, Predicate)
 	end)()
 	
+	-- Predicate wrapper
+	local Condition = (function()
+		local Condition = { }
+		local mt = { __call = function(tbl, ...) 
+			return tbl.pred(...) ^ tbl.negate end -- XOR to negate result
+		}
+		
+		-- @param [table] pred Predicate instance
+		-- @param [bool] negate True to negate the predicate
+		-- @return [table] Condition instance
+		function Condition:new(pred, negate)
+			return setmetatable({ pred = pred, negate = negate }, mt) end
+			
+		return Condition
+	end)()
+	
+	local Rule = (function()
+		local Rule = { }
+		local mt = { 
+			__call = function(tbl, ...) return tbl:evaluate() end,
+			__index = Rule,
+		}
+		
+		function Rule:new(conditions)
+			return setmetatable({ conditions = conditions }, mt) end
+			
+		function Rule:
+	end)()
+	
 	----------------------------------------------------------------------
     --------------------------- CUSTOM OPTIONS ---------------------------
     ----------------------------------------------------------------------
 	
 	local Preferencess = (function()
 		local Preferencess = { }
+		local mt = {
+			__call = function(tbl, ...) return tbl:evaluate(...) end,
+		end
+		
 		local cfg = aura_env.config
 		
 		local function load_low_duration()
@@ -818,8 +851,6 @@ local function main()
 			local prefs = Preferencess:get()
 			-- No consume preferences listed -- disable display
 			if next(prefs.quantity_by_item) == nil then return end
-			
-			
 			
 		end
 	end
