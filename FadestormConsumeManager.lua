@@ -20,9 +20,9 @@ local function main()
     ---------------------------- INITIALIZING  ---------------------------
     ----------------------------------------------------------------------
 
-	-- Avoid loading the aura twice at all costs
+	--[[ Avoid loading listeners twice. Otherwise opening or closing character
+	frame causes multiple triggers of 'FCM_SHOW'/'FCM_HIDE', causing disaster]]--
 	local AURA_LOADED = "FCM_WEAK_AURA_LOADED"
-
 	if not _G[AURA_LOADED] then
 		local function char_frame_show()
 			WeakAuras.ScanEvents("FCM_SHOW")
@@ -38,7 +38,52 @@ local function main()
 		_G[AURA_LOADED] = true
 	end
 	
+	-- TODO: Move these
 	local item_cached, cache_item = C_Item.IsItemDataCachedByID, C_Item.RequestLoadItemDataByID
+	
+	----------------------------------------------------------------------
+	------------------------------- DEBUG --------------------------------
+    ----------------------------------------------------------------------
+	
+	local AURA_NAME = "Fadestorm Consumable Manager"
+	
+	local Log = (function()
+		local function log_msg(level, msg)
+			print(format("[%s] %s: %s",
+				Palette.LIME(AURA_NAME), Palette.YELLOW(upper(level)), msg))
+		end
+		
+		return setmetatable({ }, {
+			__index = function(_, level)
+				return function(msg) log_msg(level, msg) end
+			end
+		})
+	end)()
+	
+	local Type = (function()
+		local function type_mismatch(expected, actual)
+			Log.error(format("Type Mismatch | Expected=%s, Actual=%s", expected, actual))
+		end
+	
+		local checkers = setmetatable({ }, {
+			__index = function(tbl, expected)
+				local function f(T, log)
+					local actual = type(T)
+					if expected == actual then return true end
+					if log then type_mismatch(expected, actual) end
+					return false
+				end
+				rawset(tbl, expected, f)
+				return f
+			end
+		})
+		
+		return setmetatable({ }, {
+			__index = function(_, T)
+				return checkers[T]
+			end
+		})
+	end)()
 
     ----------------------------------------------------------------------
     -------------------------------- UTILS -------------------------------
@@ -47,6 +92,10 @@ local function main()
 	local s_duplicate, lower, format, upper = string.rep, string.lower, string.format, string.upper
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat = table.sort, table.insert, table.concat
+	
+	local function empty(t)
+		return next(t) == nil
+	end
 	
 	local function trim(s)
 		return s:match("^%s*(.-)%s*$")
@@ -119,6 +168,7 @@ local function main()
 	-- __call() -- Returns the table currently being explored
 	-- __index(key) -- Returns the value for current depth, or tunnels if table
 	]]--
+	
 	local function Tunneler(tbl)
 		return setmetatable({ }, {
 			__index = function(tunneler, key)
@@ -137,7 +187,8 @@ local function main()
 	Consider separation of static & instance tables
 	
 	local function Class(static, proto)
-		proto = proto or {}
+		static = static or { }
+		proto = proto or { }
 		proto.__index = proto
 
 		static.__proto = proto
@@ -166,10 +217,6 @@ local function main()
 		assigner(proxy)
 		return cls
 	end
-	
-	----------------------------------------------------------------------
-	------------------------------- DEBUG --------------------------------
-    ----------------------------------------------------------------------
 
 	-- Color class for coloring text
 	local Color = (function()
@@ -238,23 +285,7 @@ local function main()
 		--OLIVE = Color.new(128, 128, 0),
 	}
 	
-	local AURA_NAME = "Fadestorm Consumable Manager"
-	
-	local Log = (function()
-		local cls = { }
-		
-		local function log_msg(level, msg)
-			print(format("[%s] %s: %s",
-				Palette.LIME(AURA_NAME), Palette.YELLOW(upper(level)), msg))
-		end
-		
-		return setmetatable(cls, {
-			__index = function(_, level)
-				return function(msg)
-					log_msg(level, msg) end
-			end
-		})
-	end)()
+
 	
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
@@ -816,6 +847,17 @@ local function main()
 		function Rule:new(conditions)
 			return setmetatable({ conditions = conditions }, mt) end
 		
+		-- @param [table] rules List of rule instances to evaluate
+		-- @param [varargs] ... Params to be passed into each rule
+		function Rule.all_passing(rules, ...)
+			local t = { }
+			for _, rule in ipairs(rules) do
+				-- Create set for items that are allowed by rules 
+								
+			end
+			return t
+		end
+		
 		return Rule
 	end)()
 	
@@ -825,9 +867,6 @@ local function main()
 	
 	local Preferencess = (function()
 		local Preferencess = { }
-		local mt = {
-			__call = function(tbl, ...) return tbl:evaluate(...) end,
-		end
 		
 		local function load_low_duration()
 			return aura_env.config.options.low_duration_thresh / 100 end
@@ -884,17 +923,30 @@ local function main()
 		
 		return Preferencess
 	end)()
+	
+	local function item_follows_rules(item_ref, rules)
+		for _, rule_ref in ipairs(rules) do
+			if rule_ref(item_ref) ~= true then return false end end
+		return true
+	end
 
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
     ----------------------------------------------------------------------
-    
+	
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preferencess:get()
-			-- No consume preferences listed -- disable display
-			if next(prefs.quantity_by_item) == nil then return end
+			local item_set = get_allowed_items(prefs)
+			if empty(item_set) then return end
 			
+			local block = Text:new()
+			for _, category in ipairs(Item.categories) do
+				local t = { }
+				for _, item_ref in ipairs(Item.by_category(category)) do
+					
+				end
+			end
 		end
 	end
 	
