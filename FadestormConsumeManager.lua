@@ -84,37 +84,43 @@ local function main()
 			end
 		})
 	end)()
+	
+	-- @param [?] value Value to be typechecked
+	-- @param [function] typer Callback provided by Type
+	-- @param (optional) [function] defaulter Generator for nil values
+	local function check(value, typer, defaulter)
+		if value == nil and defaulter ~= nil then			
+			Type.function(defaulter, true)
+			value = defaulter()
+		end
+		typer(value, true)
+		return value
+	end
 
     ----------------------------------------------------------------------
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
-
-	local s_duplicate, lower, format, upper = string.rep, string.lower, string.format, string.upper
+	
+	local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat = table.sort, table.insert, table.concat
 	
-	local function empty(t)
-		return next(t) == nil
-	end
+	local function empty(t) return next(t) == nil end
+	local function clamp(x, a, b) return max(min(x, b), a) end
+	local function trim(s) s:match("^%s*(.-)%s*$") end
+	local function empty_table() return { } end
 	
-	local function trim(s)
-		return s:match("^%s*(.-)%s*$")
-	end
-	
-	local function copy(tbl)
-		local t = { }
-		for k, v in pairs(tbl) do
-			t[k] = v end
-		return t
-	end
-	
-	local function clamp(x, a, b)
-		return max(min(x, b), a)
+	local function sum(t)
+		local s = 0
+		for _, n in ipairs(check(t, Type.table)) do
+			s = s + check(n, Type.number) end
+		return s
 	end
 	
 	local function mapper(tbl, cb)
 		local t = { }
-		for k, v in pairs(tbl) do
+		check(cb, Type.function)
+		for k, v in pairs(check(tbl, Type.table)) do
 			local a, b = cb(k, v)
 			-- Allow nil key mappings to be skipped
 			if a ~= nil then
@@ -123,59 +129,19 @@ local function main()
 		return t
 	end
 	
-	local function grouper(tbl, cb)
-		local buckets = { }
-		for k, v in pairs(tbl) do
-			local key = cb(k, v)
-			local bucket = buckets[key]
-			if bucket == nil then
-				bucket = { }
-				buckets[key] = bucket
-			end
-		
-			bucket[k] = v
-		end
-		
-		return buckets
-	end
-	
-	local function sorter(tbl, cb)
-		local relations = { }
-		local keys = { }
-		for k, v in pairs(tbl) do
-			local key = cb(k, v)
-			relations[key] = k
-			insert(keys, key)
-		end
-		
-		sort(keys)
-		return mapper(keys, function(i, e)
-			return i, relations[e]
-		end)
-	end
-	
-	local function sum(t)
-		local s = 0
-		for _, e in ipairs(t) do
-			s = s + e
-		end
-		return s
-	end
-	
 	--[[
 	-- Tunnels into a table, allowing descending without repetiton
 	--
 	-- __call() -- Returns the table currently being explored
 	-- __index(key) -- Returns the value for current depth, or tunnels if table
 	]]--
-	
 	local function Tunneler(tbl)
 		return setmetatable({ }, {
-			__index = function(tunneler, key)
-				local value = tbl[key]
-				if type(value) == "table" then
+			__index = function(tunnel, key)
+				local value = tbl[check(key, Type.string)]
+				if Type.table(value) then
 					tbl = value -- Dig one layer
-					return tunneler
+					return tunnel
 				end
 				return value
 			end,
@@ -183,29 +149,43 @@ local function main()
 		})
 	end
 	
-	--[[
-	Consider separation of static & instance tables
-	
+	-- @param (optional) [table] static Existing static members of the class
+	-- @param (optional) [table] proto Existing instance members of the class
+	-- @return [table] Static table used for class methods/functions
+	-- @return [table] Instance table used for instance methods
+	-- @return [function] Constructor to create instances of the class
+	-- @return [table] Instance metatable
 	local function Class(static, proto)
-		static = static or { }
-		proto = proto or { }
-		proto.__index = proto
+		static = check(static, Type.table, empty_table)
+		proto = check(proto, Type.table, empty_table)
+		local proto_mt = { 
+			__index = proto,
+			__metatable = false
+		}
+		
+		-- Weak table, values can be garbage collected
+		local instances = setmetatable({ }, { __mode = "k" })
 
-		static.__proto = proto
-
-		function static:new(o)
-			return setmetatable(o or {}, proto)
+		local function new(o)
+			local obj = setmetatable(check(o, Type.table, empty_table), mt)
+			instances[obj] = true -- Enable tracking of class instances
+			return obj
+		end
+		
+		-- @param [table] obj Object instance to check
+		-- @return [bool] True if the object is a class instance
+		function static.is_instance(obj)
+			return instances[check(obj, Type.table)]
 		end
 
-		return static, proto
+		return static, proto, new, mt
 	end
-	]]--
 	
 	-- @param [function] assigner [nil] function(e) where all enum pairs are put in param
 	-- @param (optional) [table] cls Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or cls param if provided
 	local function Enum(assigner, cls)
-		if cls == nil then cls = { } end
+		cls = check(cls, Type.table, empty_table)
 		local ordinal = 1
 		local proxy = setmetatable({ }, {
 			__newindex = function(_, key, value)
@@ -214,43 +194,44 @@ local function main()
 				ordinal = ordinal + 1
 			end
 		}
-		assigner(proxy)
+		
+		check(assigner, Type.function)(proxy)
 		return cls
 	end
 
 	-- Color class for coloring text
 	local Color = (function()
-		local cls = { }
-		cls.__index = cls
-
-		local X, Y = 0, 255
-
-		local function to_hex_code(c)
-			return format("%02x", clamp(c, X, Y))
-		end
-
-		function cls:__tostring()
+		local Color, proto, new, mt = Class()
+		
+		function mt:__tostring()
 			return format("Color(%d, %d, %d, %d)", self.r, self.g, self.b, self.a)
 		end
-
-		function cls:HexCode()
-			return "ff" .. to_hex_code(self.r) .. to_hex_code(self.g) .. to_hex_code(self.b)
+		
+		function mt:__call(text)
+			return format("|c%s%s|r", self:hex_code(), text)
 		end
+		
+		local X, Y = 0, 255 -- min/max for color values
+		local function default_alpha() return Y end
 
-		function cls:__call(text)
-			return "|c" .. self:HexCode() .. text .. "|r"
+		local function to_hex(c)
+			return format("%02x", clamp(c, X, Y))
 		end
-
-		function cls.new(r, g, b, a)
-			return setmetatable({
-				r = r ~= nil and clamp(r, X, Y) or Y,
-				g = g ~= nil and clamp(g, X, Y) or Y,
-				b = b ~= nil and clamp(b, X, Y) or Y,
-				a = a ~= nil and clamp(a, X, Y) or Y,
-			}, cls)
+		
+		-- @return [string] Hex code for the color
+		function proto:hex_code()
+			return format("ff%s%s%s", to_hex(self.r), to_hex(self.g), to_hex(self.b))
 		end
-
-		return setmetatable({ }, cls)
+			
+		function Color.new(r, g, b, a)
+			local obj = new()
+			obj.r = clamp(floor(check(r, Type.number)), X, Y)
+			obj.g = clamp(floor(check(g, Type.number)), X, Y)
+			obj.b = clamp(floor(check(b, Type.number)), X, Y)
+			obj.a = clamp(floor(check(b, Type.number, default_alpha)), X, Y)
+		end
+		
+		return Color
 	end)()
 	
 	local Palette = {
@@ -676,13 +657,13 @@ local function main()
 		-- @param [string] char Border character to be repeated
 		-- @return [string] Formatted header
 		local function build_header(title, length, char)
-			if title == nil then return s_duplicate(char, length) end
+			if title == nil then return srep(char, length) end
 			title = trim(title)
-			if title == "" then return s_duplicate(char, length) end
+			if title == "" then return srep(char, length) end
 			local t_len = #title + 2
 			local s_len = (length - t_len) / 2
 			local s_lenf = floor(s_len)
-			local section = s_duplicate(char, s_lenf)
+			local section = srep(char, s_lenf)
 			if s_len == s_lenf then
 				return format("%s %s %s", section, title, section) end
 			return format("%s %s %s%s", section, title, section, char)
