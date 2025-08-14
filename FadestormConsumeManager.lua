@@ -608,96 +608,6 @@ local function main()
 		return Item
 	end)()
 	
-	local Text = (function()
-		local Text, proto, new, mt = Class()
-		
-		function Text:new()
-			return new({
-				headers = { },
-				lines_by_header = setmetatable({ }, {
-					__index = empty_table
-				}),
-				longest = 0
-			})
-		end
-		
-		local function line_helper(tbl, str, length, dx, target)
-			Type.string(str, true)
-			if length == nil then
-				length = #str
-			else Type.number(length) end
-			tbl.longest = max(tbl.longest, length + dx)
-			insert(target, str)
-		end
-		
-		-- @param [string] title Centered text of this header
-		-- @param (optional) [number] length Override for the text length
-		-- @return [table] Builder instance
-		function proto:header(title, length)
-			line_helper(self, title, length, 2, self.headers)
-			self.current = title
-			return self
-		end
-		
-		-- @param [string] line Text which is housed under the header
-		-- @param (optional) [number] length Override for the text length
-		-- @return [table] Builder instance
-		function proto:line(line, length)
-			line_helper(self, line, length, 0, self.lines_by_header[self.current])
-			return self
-		end
-		
-		-- Assigns a unique color to each header, with filter support
-		local function colors_by_header(instance, color_filter)
-			local filter = mapper(color_filter, function(_, c) return c, true end) -- Set
-			local color_keys = { }
-			for k, v in pairs(Palette) do
-				if filter[v] == nil then -- Color is allowed
-					insert(color_keys, k) end end
-			local num_headers = #instance.headers
-			-- Possible not enough colors left, failsafe protection
-			for i = 1, num_headers - #color_keys do
-				insert(color_keys, (next(Palette))) end
-			sort(color_keys) -- Sorted colors gives output a more predictable look
-			local color_map = { }
-			for i = 1, num_headers do
-				color_map[instance.headers[i]] = Palette[color_keys[i]] end
-			return color_map
-		end
-		
-		local function build_header(title, length, char)
-			if title == nil then return srep(char, length) end
-			title = trim(title)
-			if title == "" then return srep(char, length) end
-			local t_len = #title + 2
-			local s_len = (length - t_len) / 2
-			local s_lenf = floor(s_len)
-			local section = srep(char, s_lenf)
-			if s_len == s_lenf then
-				return format("%s %s %s", section, title, section) end
-			return format("%s %s %s%s", section, title, section, char)
-		end
-		
-		-- @param [table] color_filter List of header colors which should not be used
-		-- @return [string] Built text block
-		function proto:build(color_filter)
-			local header_colors = colors_by_header(self, check(color_filter, Type.table))
-			local block_width = self.longest
-			local block = { }
-			for _, header in ipairs(self.header) do
-				local lines = self.lines_by_header[header]
-				header = header_colors[header](header)
-				insert(block, build_header(header, block_width, "~"))
-			end
-			return concat(block, "\n")
-		end
-		
-		function Text.inline_icon(texture, width)
-			return format("|T%s:%d:%d|t", texture, width, width) end
-		
-		return Text
-	end)()
-	
 	local Severity = (function()
 		local Symbol = (function()
 			local function repr() return self.color(self.code) end
@@ -852,8 +762,8 @@ local function main()
     --------------------------- CUSTOM OPTIONS ---------------------------
     ----------------------------------------------------------------------
 	
-	local Preferencess = (function()
-		local Preferencess = { }
+	local Preference = (function()
+		local Preference, proto, new, mt = Class()
 		
 		local function load_low_duration()
 			return aura_env.config.options.low_duration_thresh / 100 end
@@ -890,32 +800,121 @@ local function main()
 		end
 		
 		-- low_duration_thresh: %max duration to be considered 'low duration'
-		function Preferencess:new()
-			local obj = { }
-			obj.low_duration_thresh = load_low_duration()
-			obj.quantity_by_item = load_item_quantities()
-			obj.rules = load_rules()
-			return obj
+		function Preference:new()
+			return new({
+				low_duration = load_low_duration(),
+				quantity_by_item = load_item_quantities(),
+				rules = load_rules()
+			})
 		end
 		
-		-- This should only be called after Item.ready()
-		function Preferencess:get()
-			local prefs = self.prefs
-			if prefs == nil then
-				prefs = self:new()
-				self.prefs = prefs
+		-- Note: This function should not be called before `Item.ready`
+		-- @return [table] Retrieves the singleton preference instance
+		function Preference:get()
+			local instance = self.instance
+			if instance == nil then
+				instance = self:new()
+				self.instance = instance
 			end
-			return prefs
+			return instance
 		end
 		
-		return Preferencess
+		return Preference
 	end)()
 	
-	local function item_follows_rules(item, rules)
-		for _, rule_ref in ipairs(rules) do
-			if rule_ref(item) ~= true then return false end end
-		return true
-	end
+    ----------------------------------------------------------------------
+	------------------------------ DISPLAY -------------------------------
+    ----------------------------------------------------------------------
+	
+	local Text = (function()
+		local Text, proto, new, mt = Class()
+		
+		function Text:new()
+			return new({
+				headers = { },
+				lines_by_header = setmetatable({ }, {
+					__index = empty_table
+				}),
+				longest = 0
+			})
+		end
+		
+		local function line_helper(tbl, str, length, dx, target)
+			Type.string(str, true)
+			if length == nil then
+				length = #str
+			else Type.number(length) end
+			tbl.longest = max(tbl.longest, length + dx)
+			insert(target, str)
+		end
+		
+		-- @param [string] title Centered text of this header
+		-- @param (optional) [number] length Override for the text length
+		-- @return [table] Builder instance
+		function proto:header(title, length)
+			line_helper(self, title, length, 2, self.headers)
+			self.current = title
+			return self
+		end
+		
+		-- @param [string] line Text which is housed under the header
+		-- @param (optional) [number] length Override for the text length
+		-- @return [table] Builder instance
+		function proto:line(line, length)
+			line_helper(self, line, length, 0, self.lines_by_header[self.current])
+			return self
+		end
+		
+		-- Assigns a unique color to each header, with filter support
+		local function colors_by_header(instance, color_filter)
+			local filter = mapper(color_filter, function(_, c) return c, true end) -- Set
+			local color_keys = { }
+			for k, v in pairs(Palette) do
+				if filter[v] == nil then -- Color is allowed
+					insert(color_keys, k) end end
+			local num_headers = #instance.headers
+			-- Possible not enough colors left, failsafe protection
+			for i = 1, num_headers - #color_keys do
+				insert(color_keys, (next(Palette))) end
+			sort(color_keys) -- Sorted colors gives output a more predictable look
+			local color_map = { }
+			for i = 1, num_headers do
+				color_map[instance.headers[i]] = Palette[color_keys[i]] end
+			return color_map
+		end
+		
+		local function build_header(title, length, char)
+			if title == nil then return srep(char, length) end
+			title = trim(title)
+			if title == "" then return srep(char, length) end
+			local t_len = #title + 2
+			local s_len = (length - t_len) / 2
+			local s_lenf = floor(s_len)
+			local section = srep(char, s_lenf)
+			if s_len == s_lenf then
+				return format("%s %s %s", section, title, section) end
+			return format("%s %s %s%s", section, title, section, char)
+		end
+		
+		-- @param [table] color_filter List of header colors which should not be used
+		-- @return [string] Built text block
+		function proto:build(color_filter)
+			local header_colors = colors_by_header(self, check(color_filter, Type.table))
+			local block_width = self.longest
+			local block = { }
+			for _, header in ipairs(self.header) do
+				local lines = self.lines_by_header[header]
+				header = header_colors[header](header)
+				insert(block, build_header(header, block_width, "~"))
+			end
+			return concat(block, "\n")
+		end
+		
+		function Text.inline_icon(texture, width)
+			return format("|T%s:%d:%d|t", texture, width, width) end
+		
+		return Text
+	end)()
 
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
@@ -923,7 +922,7 @@ local function main()
 	
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
-			local prefs = Preferencess:get()
+			local prefs = Preference:get()
 			local item_set = get_allowed_items(prefs)
 			if is_empty(item_set) then return end
 			
