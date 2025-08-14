@@ -819,6 +819,17 @@ local function main()
 			return instance
 		end
 		
+		-- @return [table] List of items which the user wants to display
+		function proto:filter_items()
+			local items = { }
+			local rules = self.rules
+			for item in pairs(self.quantity_by_item) do
+				if Rule.all_passing(rules, item) then
+					insert(items, item) end end -- Item is allowed by user
+			sort(items, function(a, b) return a:info() < b:info() end)
+			return items
+		end
+		
 		return Preference
 	end)()
 	
@@ -923,16 +934,11 @@ local function main()
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preference:get()
-			local item_set = get_allowed_items(prefs)
-			if is_empty(item_set) then return end
+			local items = prefs:filter_items()
+			if is_empty(items) then return end -- User has no items to display
 			
 			local block = Text:new()
-			for _, category in ipairs(Item.categories) do
-				local t = { }
-				for _, item in ipairs(Item.by_category(category)) do
-					
-				end
-			end
+			print("Testing Run.")
 		end
 	end
 	
