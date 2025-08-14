@@ -693,8 +693,7 @@ local function main()
 		end
 		
 		function Text.inline_icon(texture, width)
-			return format("|T%s:%d:%d|t", texture, width, width)
-		end
+			return format("|T%s:%d:%d|t", texture, width, width) end
 		
 		return Text
 	end)()
@@ -733,9 +732,9 @@ local function main()
 		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item, prefs)
-			local aura_id = item.spell_id
+			local aura_id = check(item, Type.table).spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
-			return severity_by_buff(aura_id, prefs.low_duration_thresh)
+			return severity_by_buff(aura_id, check(prefs, Type.table).low_duration_thresh)
 		end
 		
 		-- Measures the severity of a consumable's remaining supply
@@ -745,7 +744,8 @@ local function main()
 		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item, prefs)
-			local req_quantity = prefs.quantity_by_item[item]
+			local req_quantity = check(prefs, Type.table)
+				.quantity_by_item[check(item, Type.table)]
 			local bags, elsewhere = item:get_supply()
 			if bags >= req_quantity then
 				return Severity.STABLE end
@@ -773,20 +773,18 @@ local function main()
 	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
 	]]--
 	local Predicate = (function()
-		local Predicate = { }
-		local mt = {
-			__call = function(tbl, ...) return tbl.evaluate(...) end,
-			__tostring = function(tbl) return tbl.repr end,
-		end
+		local Predicate, proto, new, mt = Class()
+		mt.__call = function(tbl, ...) return tbl.evaluate(...) end
+		mt.__tostring = function(tbl) return tbl.repr end
 		
 		-- @param [string] repr String representation of the predicate
 		-- @param [function] Peforms an evaluation, [bool] function(item)
 		-- @return [table] Predicate instance
 		function Predicate:new(repr, evaluate)
-			return setmetatable({
-				repr = repr,
-				evaluate = evaluate
-			}, mt)
+			return new({
+				repr = check(repr, Type.string),
+				evaluate = check(evaluate, Type.function)
+			})
 		end
 		
 		return Enum(function(e)
@@ -800,52 +798,51 @@ local function main()
 			e.IN_RESTED_AREA = IsResting,
 			-- Returns true if the specified item has buffing capability
 			e.ITEM_YIELDS_BUFF = function(item)
-				return item.spell_id ~= nil end,
+				return check(item, Type.table).spell_id ~= nil end,
 			-- Returns true if at least one of the item is in the player's inventory
 			e.ITEM_IN_INVENTORY = function(item)
-				return GetItemCount(item.item_id) > 0 end,
+				return GetItemCount(check(item, Type.table).item_id) > 0 end,
 		end, Predicate)
 	end)()
 	
 	-- Predicate wrapper
 	local Condition = (function()
-		local Condition = { }
-		local mt = { __call = function(tbl, ...) 
-			return tbl.pred(...) ^ tbl.negate end -- XOR to negate result
-		}
+		local Condition, proto, new, mt = Class()
+		-- Call predicate, pass in item param, negate output if applicable
+		mt.__call = function(tbl, ...) return tbl.pred(...) ^ tbl.negate end
 		
 		-- @param [table] pred Predicate instance
 		-- @param [bool] negate True to negate the predicate
 		-- @return [table] Condition instance
 		function Condition:new(pred, negate)
-			return setmetatable({ pred = pred, negate = negate }, mt) end
-			
+			return new({
+				pred = check(pred, Type.table),
+				negate = check(negate, Type.function)
+			})
+		
 		return Condition
 	end)()
 	
 	local Rule = (function()
-		local Rule = { }
-		local mt = { 
-			__call = function(tbl, ...)
-				for _, cond in ipairs(conditions) do
-					if cond(...) ~= true then return false end end
-				return true
-			end,
-			__index = Rule,
-		}
+		local Rule, proto, new, mt = Class()
+		mt.__call = function(tbl, ...)
+			for _, cond in ipairs(tbl.conditions) do
+				if cond(...) ~= true then return false end end
+			return true
+		end
 		
+		-- @param [table] List of conditions which are tested to all be true
+		-- @return [table] Rule instance
 		function Rule:new(conditions)
-			return setmetatable({ conditions = conditions }, mt) end
+			return new({ conditions = check(conditions, Type.table) })
 		
 		-- @param [table] rules List of rule instances to evaluate
 		-- @param [varargs] ... Params to be passed into each rule
+		-- @return [bool] True if all rules are passing
 		function Rule.all_passing(rules, ...)
-			local t = { }
-			for _, rule in ipairs(rules) do
-				-- Create set for items that are allowed by rules 
-								
-			end
-			return t
+			for _, rule in ipairs(check(rules, Type.table)) do
+				if rule(...) ~= true then return false end end
+			return true
 		end
 		
 		return Rule
