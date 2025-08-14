@@ -105,10 +105,16 @@ local function main()
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat = table.sort, table.insert, table.concat
 	
-	local function empty(t) return next(t) == nil end
-	local function clamp(x, a, b) return max(min(x, b), a) end
-	local function trim(s) s:match("^%s*(.-)%s*$") end
 	local function empty_table() return { } end
+	local function is_empty(t) 
+		return next(check(t, Type.table)) == nil end
+	
+	local function trim(s) 
+		check(s, Type.string):match("^%s*(.-)%s*$") end
+		
+	local function clamp(x, a, b)
+		return max(min(check(x, Type.number), check(b, Type.number)), check(a, Type.number))
+	end
 	
 	local function sum(t)
 		local s = 0
@@ -118,8 +124,8 @@ local function main()
 	end
 	
 	local function mapper(tbl, cb)
+		Type.function(cb, true)
 		local t = { }
-		check(cb, Type.function)
 		for k, v in pairs(check(tbl, Type.table)) do
 			local a, b = cb(k, v)
 			-- Allow nil key mappings to be skipped
@@ -137,11 +143,11 @@ local function main()
 	]]--
 	local function Tunneler(tbl)
 		return setmetatable({ }, {
-			__index = function(tunnel, key)
+			__index = function(tunneler, key)
 				local value = tbl[check(key, Type.string)]
 				if Type.table(value) then
 					tbl = value -- Dig one layer
-					return tunnel
+					return tunneler
 				end
 				return value
 			end,
@@ -182,21 +188,21 @@ local function main()
 	end
 	
 	-- @param [function] assigner [nil] function(e) where all enum pairs are put in param
-	-- @param (optional) [table] cls Class table to contain the constants, or nil to create
-	-- @return [table] Enum table, or cls param if provided
-	local function Enum(assigner, cls)
-		cls = check(cls, Type.table, empty_table)
+	-- @param (optional) [table] static Class table to contain the constants, or nil to create
+	-- @return [table] Enum table, or static param if originally provided
+	local function Enum(assigner, static)
+		static = check(static, Type.table, empty_table)
 		local ordinal = 1
 		local proxy = setmetatable({ }, {
 			__newindex = function(_, key, value)
-				rawset(cls, key, value)
-				rawset(cls, ordinal, value)
+				rawset(static, key, value)
+				rawset(static, ordinal, value)
 				ordinal = ordinal + 1
 			end
 		}
 		
 		check(assigner, Type.function)(proxy)
-		return cls
+		return static
 	end
 
 	-- Color class for coloring text
@@ -224,11 +230,12 @@ local function main()
 		end
 			
 		function Color.new(r, g, b, a)
-			local obj = new()
-			obj.r = clamp(floor(check(r, Type.number)), X, Y)
-			obj.g = clamp(floor(check(g, Type.number)), X, Y)
-			obj.b = clamp(floor(check(b, Type.number)), X, Y)
-			obj.a = clamp(floor(check(b, Type.number, default_alpha)), X, Y)
+			return new({
+				r = clamp(floor(check(r, Type.number)), X, Y)
+				g = clamp(floor(check(g, Type.number)), X, Y)
+				b = clamp(floor(check(b, Type.number)), X, Y)
+				a = clamp(floor(check(b, Type.number, default_alpha)), X, Y)
+			})
 		end
 		
 		return Color
@@ -256,7 +263,7 @@ local function main()
 		CHARTREUSE = Color.new(127, 255, 0),
 		CORAL = Color.new(240, 128, 128),
 		GOLDENROD = Color.new(250, 250, 210),
-		-- Removed colors, poor display on black BG
+		--[[ Removed colors, poor display on black BG ]]--
 		--BROWN = Color.new(139, 69, 19),
 		--BLUE = Color.new(0, 0, 255),
 		--BLACK = Color.new(0, 0, 0),
@@ -273,9 +280,8 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local Item = (function()
-		local Item = { }
-		local mt = { }
-		
+		local Item, proto, new, mt = Class()
+			
 		-- Reverse maps to find item object instances
 		local by_id, by_name, by_category = { }, { }, { }
 		local category_by_item, categories = { }, { }
@@ -283,43 +289,44 @@ local function main()
 		-- Holds item IDs which have yet to be cached
 		local pending_cache_ids = { }
 		
-		-- @param [table] self Implicit Item instance
+		-- @param [table] item Implicit Item instance
 		-- @return [string] Category in which the item is classified as
-		local function category(self)
-			return category_by_item[self]
-		end
+		local function category(item)
+			return category_by_item[check(item, Type.table)] end
 		
 		-- @param [string] item_name Name of the item, case-insensitive
-		-- @return [table] Corresponding Item instance, or nil
+		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_name(item_name)
-			return by_name[lower(trim(item_name))] end
+			return by_name[lower(trim(check(item_name, Type.item)))] end
 		
 		-- @param [number] item_id In-game ID of the item
-		-- @return [table] Corresponding Item instance, or nil
+		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_id(item_id)
-			return by_id[item_id] end
+			return by_id[check(item_id, Type.number)] end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
 		-- @return [table] Item instance
 		function Item:new(item_id, spell_id)
-			local obj = { item_id = item_id, spell_id = spell_id }
+			local obj = new({ item_id = check(item_id, Type.number) })
+			if spell_id ~= nil then
+				obj.spell_id = check(spell_id, Type.number) end
 			by_id[item_id] = obj -- Allow reverse lookups
 			if not item_cached(item_id) then
 				pending_cache_ids[item_id] = true end
-			return setmetatable(obj, mt)
+			return obj
 		end
 		
 		-- @return [string] Name of the item
 		-- @return [string] In-game item hyperlink
 		-- @return [string] In-game item icon file path
-		function Item:get_info()
+		function proto:get_info()
 			--[[
 			-- 01: itemName, 02: itemLink, 03: itemQuality, 04: itemLevel, 05: itemMinLevel, 06: itemType
 			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
 			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
 			]]--
-			local name, link, _, _, _, _, _, _, _, _, texture = GetItemInfo()
+			local name, link, _, _, _, _, _, _, _, _, texture = GetItemInfo(self.item_id)
 			return name, link, texture
 		end
 		
@@ -343,7 +350,7 @@ local function main()
 		
 		-- @return [number] Quantity of the item in the player's bags
 		-- @return [number] Quantity of the item outside of the player's bags
-		function Item:get_supply()
+		function proto:get_supply()
 			return get_item_counts(self.item_id)
 		end
 		
@@ -356,15 +363,15 @@ local function main()
 			local handler = index_override[key]
 			if handler ~= nil then
 				return handler(tbl)
-			else return Item[key] end
+			else return rawget(proto, key) end
 		end
 		
 		-- Sorts each category by name & maps names->items
 		local function organize_names(items)
-			local names = mapper(items, function(_, i)
-				local name = lower((GetItemInfo(i)))
-				by_name[name] = i
-				return i, name
+			local names = mapper(items, function(_, item)
+				local name = lower((GetItemInfo(item)))
+				by_name[name] = item
+				return item, name
 			end)
 			sort(items, function(a, b)
 				return names[a] < names[b] end)
@@ -385,7 +392,7 @@ local function main()
 		-- @param [number] item_id In-game Item ID to check if cached, or to cache
 		-- @return [bool] true, if Item ID is cached
 		function Item.cache(item_id)
-			if item_cached(item_id) then
+			if item_cached(check(item_id, Type.number)) then
 				pending_cache_ids[item_ids] = nil
 				return true
 			end
@@ -594,33 +601,40 @@ local function main()
 				Item:new(10761), -- Coldrage Dagger
 			}
 		}) do
-			for _, i in ipairs(items) do
-				category_by_item[category] = i end
+			for _, item in ipairs(items) do
+				category_by_item[category] = item end
 		end
 		
 		return Item
 	end)()
 	
 	local Text = (function()
-		local Text = { }
-		local mt = { __index = Text }
+		local Text, proto, new, mt = Class()
 		
 		function Text:new()
-			local obj = { }
-			obj.headers = { }
-			obj.lines_by_header = setmetatable({ },
-				{ __index = function() return { } end })
-			obj.longest = 0
-			return setmetatable(obj, mt)
+			return new({
+				headers = { },
+				lines_by_header = setmetatable({ }, {
+					__index = empty_table
+				}),
+				longest = 0
+			})
+		end
+		
+		local function line_helper(tbl, str, length, dx, target)
+			Type.string(str, true)
+			if length == nil then
+				length = #str
+			else Type.number(length) end
+			tbl.longest = max(tbl.longest, length + dx)
+			insert(target, str)
 		end
 		
 		-- @param [string] title Centered text of this header
 		-- @param (optional) [number] length Override for the text length
 		-- @return [table] Builder instance
-		function Text:header(title, length)
-			if length == nil then length = #title end
-			self.longest = max(self.longest, length + 2)
-			insert(self.headers, title)
+		function proto:header(title, length)
+			line_helper(self, title, length, 2, self.headers)
 			self.current = title
 			return self
 		end
@@ -628,10 +642,9 @@ local function main()
 		-- @param [string] line Text which is housed under the header
 		-- @param (optional) [number] length Override for the text length
 		-- @return [table] Builder instance
-		function Text:line(line, length)
-			if length == nil then length = #line end
-			self.longest = max(self.longest, length + 2)
-			insert(self.lines_by_header, self.current)
+		function proto:line(line, length)
+			line_helper(self, line, length, 0, self.lines_by_header[self.current])
+			return self
 		end
 		
 		-- Assigns a unique color to each header, with filter support
@@ -652,10 +665,6 @@ local function main()
 			return color_map
 		end
 		
-		-- @param [string] title Title of the header
-		-- @param [number] length Total length of the header
-		-- @param [string] char Border character to be repeated
-		-- @return [string] Formatted header
 		local function build_header(title, length, char)
 			if title == nil then return srep(char, length) end
 			title = trim(title)
@@ -671,8 +680,8 @@ local function main()
 		
 		-- @param [table] color_filter List of header colors which should not be used
 		-- @return [string] Built text block
-		function Text:build(color_filter)
-			local header_colors = colors_by_header(self, color_filter)
+		function proto:build(color_filter)
+			local header_colors = colors_by_header(self, check(color_filter, Type.table))
 			local block_width = self.longest
 			local block = { }
 			for _, header in ipairs(self.header) do
@@ -720,11 +729,11 @@ local function main()
 		
 		-- Measures the severity of a consumable's remaining duration
 		-- Items that yield no buff always report STABLE
-		-- @param [table] item_ref Item instance to check aura duration of
+		-- @param [table] item Item instance to check aura duration of
 		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
-		function Severity:of_duration(item_ref, prefs)
-			local aura_id = item_ref.spell_id
+		function Severity:of_duration(item, prefs)
+			local aura_id = item.spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
 			return severity_by_buff(aura_id, prefs.low_duration_thresh)
 		end
@@ -732,12 +741,12 @@ local function main()
 		-- Measures the severity of a consumable's remaining supply
 		-- If TSM is installed, supply of all your realm characters are considered
 		-- If TSM is not installed, supply of only bags and bank are considered
-		-- @param [table] item_ref Item instance to check quantity of
+		-- @param [table] item Item instance to check quantity of
 		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
-		function Severity:of_quantity(item_ref, prefs)
-			local req_quantity = prefs.quantity_by_item[item_ref]
-			local bags, elsewhere = item_ref:get_supply()
+		function Severity:of_quantity(item, prefs)
+			local req_quantity = prefs.quantity_by_item[item]
+			local bags, elsewhere = item:get_supply()
 			if bags >= req_quantity then
 				return Severity.STABLE end
 			if bags + elsewhere >= req_quantity then
@@ -771,7 +780,7 @@ local function main()
 		end
 		
 		-- @param [string] repr String representation of the predicate
-		-- @param [function] Peforms an evaluation, [bool] function(item_ref)
+		-- @param [function] Peforms an evaluation, [bool] function(item)
 		-- @return [table] Predicate instance
 		function Predicate:new(repr, evaluate)
 			return setmetatable({
@@ -790,11 +799,11 @@ local function main()
 			-- Returns true if the player is currently in a city or inn
 			e.IN_RESTED_AREA = IsResting,
 			-- Returns true if the specified item has buffing capability
-			e.ITEM_YIELDS_BUFF = function(item_ref)
-				return item_ref.spell_id ~= nil end,
+			e.ITEM_YIELDS_BUFF = function(item)
+				return item.spell_id ~= nil end,
 			-- Returns true if at least one of the item is in the player's inventory
-			e.ITEM_IN_INVENTORY = function(item_ref)
-				return GetItemCount(item_ref.item_id) > 0 end,
+			e.ITEM_IN_INVENTORY = function(item)
+				return GetItemCount(item.item_id) > 0 end,
 		end, Predicate)
 	end)()
 	
@@ -858,9 +867,9 @@ local function main()
 			if profile ~= nil then
 				for _, grp in ipairs(profile.consumes) do
 					local name = lower(trim(grp.consume_name))
-					local item_ref = Item.by_name(name)
-					if item_ref ~= nil then
-						quantity_by_item[item_ref] = grp.req_quantity
+					local item = Item.by_name(name)
+					if item ~= nil then
+						quantity_by_item[item] = grp.req_quantity
 					else Log.info("User Config | Consumable DNE: " .. name) end
 				end
 			end
@@ -905,9 +914,9 @@ local function main()
 		return Preferencess
 	end)()
 	
-	local function item_follows_rules(item_ref, rules)
+	local function item_follows_rules(item, rules)
 		for _, rule_ref in ipairs(rules) do
-			if rule_ref(item_ref) ~= true then return false end end
+			if rule_ref(item) ~= true then return false end end
 		return true
 	end
 
@@ -919,12 +928,12 @@ local function main()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preferencess:get()
 			local item_set = get_allowed_items(prefs)
-			if empty(item_set) then return end
+			if is_empty(item_set) then return end
 			
 			local block = Text:new()
 			for _, category in ipairs(Item.categories) do
 				local t = { }
-				for _, item_ref in ipairs(Item.by_category(category)) do
+				for _, item in ipairs(Item.by_category(category)) do
 					
 				end
 			end
