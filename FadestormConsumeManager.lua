@@ -72,6 +72,12 @@ local function main()
 		return value
 	end
 	
+	local function type_check_default(expected, value, producer)
+		if value == nil then
+			value = type_check_strict("function", producer)() end
+		return type_check_strict(expected, value)
+	end
+	
 	local function type_check_safe(expected, value)
 		return type(value) == expected end
 	
@@ -89,17 +95,29 @@ local function main()
 	end
 	
 	--[[
-	-- Usage: <tbl>.<type>(<value>)
-	-- e.g. Type.STRING(5) -- Throws a Type Mismatch error, or returns the value
-	-- e.g. check.STRING(5) -- Returns true if the value matches the indexed type
+	-- Typechecking Usage:
+	--
+	-- Raises a Type Mismatch error if the value does not match the indexed type
+	-- @param [?] value Value to be typechecked
+	-- @return [?] Identity
+	-- function Type.DATATYPE(value)
+	--
+	-- @param [?] value Value to be typechecked
+	-- @return [boolean] True if the value's type matches the indexed type
+	-- function check.DATATYPE(value)
+	--
+	-- Returns a value (or a fallback from producer) if types match, raises a Type Mismatch error
+	-- @param [?] value Value to be typechecked
+	-- @return [?] Identity, or produced default value if nil
+	-- function default.DATATYPE(value, producer)
 	]]--
-	local Type, check = (function()
-		local function make_type_table(checker)
+	local Type, check, default = (function()
+		local function make(checker)
 			-- Hands back a typecheck function for the expected type
 			local type_handlers = setmetatable({ }, {
-				__index = function(tbl, expected)
+				__index = function(tbl, expected, ...)
 					local function handler(value)
-						return checker(expected, value) end
+						return checker(expected, value, ...) end
 					-- Cache function into the table
 					rawset(tbl, expected, handler)
 					return handler
@@ -111,7 +129,7 @@ local function main()
 				return type_handlers[lower(key)] end)
 		end
 		
-		return make_type_table(type_check_strict), make_type_table(type_check_safe)
+		return make(type_check_strict), make(type_check_safe), make(type_check_default)
 	end)()
 
     ----------------------------------------------------------------------
@@ -130,15 +148,15 @@ local function main()
 	
 	local function sum(t)
 		local s = 0
-		for _, n in ipairs(check(t, Type.TABLE)) do
-			s = s + check(n, Type.NUMBER) end
+		for _, n in ipairs(Type.TABLE(t)) do
+			s = s + Type.NUMBER(n) end
 		return s
 	end
 	
 	local function mapper(tbl, cb)
-		Type.FUNCTION(cb, true)
+		Type.FUNCTION(cb)
 		local t = { }
-		for k, v in pairs(check(tbl, Type.TABLE)) do
+		for k, v in pairs(Type.TABLE(tbl)) do
 			local a, b = cb(k, v)
 			-- Allow nil key mappings to be skipped
 			if a ~= nil then
@@ -154,17 +172,16 @@ local function main()
 	-- __index(key) -- Returns the value for current depth, or tunnels if table
 	]]--
 	local function Tunneler(tbl)
-		return setmetatable({ }, {
-			__index = function(tunneler, key)
-				local value = tbl[check(key, Type.STRING)]
-				if Type.TABLE(value) then
-					tbl = value -- Dig one layer
-					return tunneler
-				end
-				return value
-			end,
-			__call = function() return tbl end
-		})
+		local proxy = stringify_keys_table(function(key)
+			local value = tbl[key]
+			if check.TABLE(value) then
+				tbl = value
+				return proxy
+			end
+			return value
+		end)
+		getmetatable(proxy).__call = function() return tbl end
+		return proxy
 	end
 	
 	-- @param (optional) [table] static Existing static members of the class
