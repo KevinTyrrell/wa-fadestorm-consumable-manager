@@ -38,8 +38,11 @@ local function main()
 		_G[AURA_LOADED] = true
 	end
 	
-	-- TODO: Move these
+	-- Imports
 	local item_cached, cache_item = C_Item.IsItemDataCachedByID, C_Item.RequestLoadItemDataByID
+		local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
+	local max, min, floor = math.max, math.min, math.floor
+	local sort, insert, concat = table.sort, table.insert, table.concat
 	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
@@ -55,78 +58,87 @@ local function main()
 		
 		return setmetatable({ }, {
 			__index = function(_, level)
-				return function(msg) log_msg(level, msg) end
-			end
+				return function(msg) log_msg(level, msg) end end
 		})
 	end)()
 	
-	local Type = (function()
-		local function type_mismatch(expected, actual)
-			Log.error(format("Type Mismatch | Expected=%s, Actual=%s", expected, actual))
-		end
+	local function type_mismatch(expected, actual)
+		Log.error(format("Type Mismatch | Expected=%s, Actual=%s", expected, actual))
+	end
 	
-		local checkers = setmetatable({ }, {
-			__index = function(tbl, expected)
-				local function f(T, log)
-					local actual = type(T)
-					if expected == actual then return true end
-					if log then type_mismatch(expected, actual) end
-					return false
-				end
-				rawset(tbl, expected, f)
-				return f
-			end
-		})
-		
-		return setmetatable({ }, {
-			__index = function(_, T)
-				return checkers[T]
-			end
-		})
-	end)()
-	
-	-- @param [?] value Value to be typechecked
-	-- @param [function] typer Callback provided by Type
-	-- @param (optional) [function] defaulter Generator for nil values
-	local function check(value, typer, defaulter)
-		if value == nil and defaulter ~= nil then			
-			Type.function(defaulter, true)
-			value = defaulter()
-		end
-		typer(value, true)
+	local function type_check_strict(expected, value)
+		local actual = type(value)
+		if actual ~= expected then type_mismatch(expected, actual) end
 		return value
 	end
+	
+	local function type_check_safe(expected, value)
+		return type(value) == expected end
+	
+	-- Creates a special table which translates indexing into strings.
+	-- 		e.g. t.my_index => "my_index"
+	-- The translated key is sent to a callback function for remapping.
+	-- @param [function] -> [?] callback(type_str)
+	--		Returned value is passed back as the return value of all __index calls
+	local function stringify_keys_table(callback)
+		type_check_strict("function", callback)
+		return setmetatable({ }, {
+			__index = function(_, key)
+				return callback(type_check_strict("string", key)) end
+		})
+	end
+	
+	--[[
+	-- Usage: <tbl>.<type>(<value>)
+	-- e.g. Type.STRING(5) -- Throws a Type Mismatch error, or returns the value
+	-- e.g. check.STRING(5) -- Returns true if the value matches the indexed type
+	]]--
+	local Type, check = (function()
+		local function make_type_table(checker)
+			-- Hands back a typecheck function for the expected type
+			local type_handlers = setmetatable({ }, {
+				__index = function(tbl, expected)
+					local function handler(value)
+						return checker(expected, value) end
+					-- Cache function into the table
+					rawset(tbl, expected, handler)
+					return handler
+				end
+			})
+			
+			-- Type keys should be all uppercase to avoid 'function' keyword
+			return stringify_keys_table(function(key)
+				return type_handlers[lower(key)] end)
+		end
+		
+		return make_type_table(type_check_strict), make_type_table(type_check_safe)
+	end)()
 
     ----------------------------------------------------------------------
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
 	
-	local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
-	local max, min, floor = math.max, math.min, math.floor
-	local sort, insert, concat = table.sort, table.insert, table.concat
-	
 	local function empty_table() return { } end
-	local function is_empty(t) 
-		return next(check(t, Type.table)) == nil end
+	local function is_empty(t)
+		return next(Type.TABLE(t)) == nil end
 	
 	local function trim(s) 
-		check(s, Type.string):match("^%s*(.-)%s*$") end
+		Type.STRING(s):match("^%s*(.-)%s*$") end
 		
 	local function clamp(x, a, b)
-		return max(min(check(x, Type.number), check(b, Type.number)), check(a, Type.number))
-	end
+		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
 	
 	local function sum(t)
 		local s = 0
-		for _, n in ipairs(check(t, Type.table)) do
-			s = s + check(n, Type.number) end
+		for _, n in ipairs(check(t, Type.TABLE)) do
+			s = s + check(n, Type.NUMBER) end
 		return s
 	end
 	
 	local function mapper(tbl, cb)
-		Type.function(cb, true)
+		Type.FUNCTION(cb, true)
 		local t = { }
-		for k, v in pairs(check(tbl, Type.table)) do
+		for k, v in pairs(check(tbl, Type.TABLE)) do
 			local a, b = cb(k, v)
 			-- Allow nil key mappings to be skipped
 			if a ~= nil then
@@ -144,8 +156,8 @@ local function main()
 	local function Tunneler(tbl)
 		return setmetatable({ }, {
 			__index = function(tunneler, key)
-				local value = tbl[check(key, Type.string)]
-				if Type.table(value) then
+				local value = tbl[check(key, Type.STRING)]
+				if Type.TABLE(value) then
 					tbl = value -- Dig one layer
 					return tunneler
 				end
@@ -162,8 +174,8 @@ local function main()
 	-- @return [function] Constructor to create instances of the class
 	-- @return [table] Instance metatable
 	local function Class(static, proto)
-		static = check(static, Type.table, empty_table)
-		proto = check(proto, Type.table, empty_table)
+		static = check(static, Type.TABLE, empty_table)
+		proto = check(proto, Type.TABLE, empty_table)
 		local proto_mt = { 
 			__index = proto,
 			__metatable = false
@@ -173,15 +185,15 @@ local function main()
 		local instances = setmetatable({ }, { __mode = "k" })
 
 		local function new(o)
-			local obj = setmetatable(check(o, Type.table, empty_table), mt)
+			local obj = setmetatable(check(o, Type.TABLE, empty_table), mt)
 			instances[obj] = true -- Enable tracking of class instances
 			return obj
 		end
 		
 		-- @param [table] obj Object instance to check
-		-- @return [bool] True if the object is a class instance
+		-- @return [boolean] True if the object is a class instance
 		function static.is_instance(obj)
-			return instances[check(obj, Type.table)]
+			return instances[check(obj, Type.TABLE)]
 		end
 
 		return static, proto, new, mt
@@ -191,7 +203,7 @@ local function main()
 	-- @param (optional) [table] static Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or static param if originally provided
 	local function Enum(assigner, static)
-		static = check(static, Type.table, empty_table)
+		static = check(static, Type.TABLE, empty_table)
 		local ordinal = 1
 		local proxy = setmetatable({ }, {
 			__newindex = function(_, key, value)
@@ -201,7 +213,7 @@ local function main()
 			end
 		}
 		
-		check(assigner, Type.function)(proxy)
+		Type.FUNCTION(assigner)(proxy)
 		return static
 	end
 
@@ -231,10 +243,10 @@ local function main()
 			
 		function Color.new(r, g, b, a)
 			return new({
-				r = clamp(floor(check(r, Type.number)), X, Y)
-				g = clamp(floor(check(g, Type.number)), X, Y)
-				b = clamp(floor(check(b, Type.number)), X, Y)
-				a = clamp(floor(check(b, Type.number, default_alpha)), X, Y)
+				r = clamp(floor(check(r, Type.NUMBER)), X, Y)
+				g = clamp(floor(check(g, Type.NUMBER)), X, Y)
+				b = clamp(floor(check(b, Type.NUMBER)), X, Y)
+				a = clamp(floor(check(b, Type.NUMBER, default_alpha)), X, Y)
 			})
 		end
 		
@@ -292,7 +304,7 @@ local function main()
 		-- @param [table] item Implicit Item instance
 		-- @return [string] Category in which the item is classified as
 		local function category(item)
-			return category_by_item[check(item, Type.table)] end
+			return category_by_item[check(item, Type.TABLE)] end
 		
 		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil if DNE
@@ -302,15 +314,15 @@ local function main()
 		-- @param [number] item_id In-game ID of the item
 		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_id(item_id)
-			return by_id[check(item_id, Type.number)] end
+			return by_id[check(item_id, Type.NUMBER)] end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
 		-- @return [table] Item instance
 		function Item:new(item_id, spell_id)
-			local obj = new({ item_id = check(item_id, Type.number) })
+			local obj = new({ item_id = check(item_id, Type.NUMBER) })
 			if spell_id ~= nil then
-				obj.spell_id = check(spell_id, Type.number) end
+				obj.spell_id = check(spell_id, Type.NUMBER) end
 			by_id[item_id] = obj -- Allow reverse lookups
 			if not item_cached(item_id) then
 				pending_cache_ids[item_id] = true end
@@ -390,9 +402,9 @@ local function main()
 		end
 		
 		-- @param [number] item_id In-game Item ID to check if cached, or to cache
-		-- @return [bool] true, if Item ID is cached
+		-- @return [boolean] true, if Item ID is cached
 		function Item.cache(item_id)
-			if item_cached(check(item_id, Type.number)) then
+			if item_cached(check(item_id, Type.NUMBER)) then
 				pending_cache_ids[item_ids] = nil
 				return true
 			end
@@ -403,7 +415,7 @@ local function main()
 		-- Allows iteration over Item categories
 		Item.categories = categories
 		
-		-- @return [bool] True if the database has all items cached
+		-- @return [boolean] True if the database has all items cached
 		Item.ready = (function(strategy)
 			strategy = function()
 				local iter, tbl, key = pairs(pending_cache_ids)
@@ -642,9 +654,9 @@ local function main()
 		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item, prefs)
-			local aura_id = check(item, Type.table).spell_id
+			local aura_id = check(item, Type.TABLE).spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
-			return severity_by_buff(aura_id, check(prefs, Type.table).low_duration_thresh)
+			return severity_by_buff(aura_id, check(prefs, Type.TABLE).low_duration_thresh)
 		end
 		
 		-- Measures the severity of a consumable's remaining supply
@@ -654,8 +666,8 @@ local function main()
 		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item, prefs)
-			local req_quantity = check(prefs, Type.table)
-				.quantity_by_item[check(item, Type.table)]
+			local req_quantity = check(prefs, Type.TABLE)
+				.quantity_by_item[check(item, Type.TABLE)]
 			local bags, elsewhere = item:get_supply()
 			if bags >= req_quantity then
 				return Severity.STABLE end
@@ -688,12 +700,12 @@ local function main()
 		mt.__tostring = function(tbl) return tbl.repr end
 		
 		-- @param [string] repr String representation of the predicate
-		-- @param [function] Peforms an evaluation, [bool] function(item)
+		-- @param [function] Peforms an evaluation, [boolean] function(item)
 		-- @return [table] Predicate instance
 		function Predicate:new(repr, evaluate)
 			return new({
-				repr = check(repr, Type.string),
-				evaluate = check(evaluate, Type.function)
+				repr = check(repr, Type.STRING),
+				evaluate = check(evaluate, Type.FUNCTION)
 			})
 		end
 		
@@ -708,10 +720,10 @@ local function main()
 			e.IN_RESTED_AREA = IsResting,
 			-- Returns true if the specified item has buffing capability
 			e.ITEM_YIELDS_BUFF = function(item)
-				return check(item, Type.table).spell_id ~= nil end,
+				return check(item, Type.TABLE).spell_id ~= nil end,
 			-- Returns true if at least one of the item is in the player's inventory
 			e.ITEM_IN_INVENTORY = function(item)
-				return GetItemCount(check(item, Type.table).item_id) > 0 end,
+				return GetItemCount(check(item, Type.TABLE).item_id) > 0 end,
 		end, Predicate)
 	end)()
 	
@@ -722,12 +734,12 @@ local function main()
 		mt.__call = function(tbl, ...) return tbl.pred(...) ^ tbl.negate end
 		
 		-- @param [table] pred Predicate instance
-		-- @param [bool] negate True to negate the predicate
+		-- @param [boolean] negate True to negate the predicate
 		-- @return [table] Condition instance
 		function Condition:new(pred, negate)
 			return new({
-				pred = check(pred, Type.table),
-				negate = check(negate, Type.function)
+				pred = check(pred, Type.TABLE),
+				negate = check(negate, Type.BOOLEAN)
 			})
 		
 		return Condition
@@ -744,13 +756,13 @@ local function main()
 		-- @param [table] List of conditions which are tested to all be true
 		-- @return [table] Rule instance
 		function Rule:new(conditions)
-			return new({ conditions = check(conditions, Type.table) })
+			return new({ conditions = check(conditions, Type.TABLE) })
 		
 		-- @param [table] rules List of rule instances to evaluate
 		-- @param [varargs] ... Params to be passed into each rule
-		-- @return [bool] True if all rules are passing
+		-- @return [boolean] True if all rules are passing
 		function Rule.all_passing(rules, ...)
-			for _, rule in ipairs(check(rules, Type.table)) do
+			for _, rule in ipairs(check(rules, Type.TABLE)) do
 				if rule(...) ~= true then return false end end
 			return true
 		end
@@ -851,10 +863,10 @@ local function main()
 		end
 		
 		local function line_helper(tbl, str, length, dx, target)
-			Type.string(str, true)
+			Type.STRING(str, true)
 			if length == nil then
 				length = #str
-			else Type.number(length) end
+			else Type.NUMBER(length) end
 			tbl.longest = max(tbl.longest, length + dx)
 			insert(target, str)
 		end
@@ -910,7 +922,7 @@ local function main()
 		-- @param [table] color_filter List of header colors which should not be used
 		-- @return [string] Built text block
 		function proto:build(color_filter)
-			local header_colors = colors_by_header(self, check(color_filter, Type.table))
+			local header_colors = colors_by_header(self, check(color_filter, Type.TABLE))
 			local block_width = self.longest
 			local block = { }
 			for _, header in ipairs(self.header) do
