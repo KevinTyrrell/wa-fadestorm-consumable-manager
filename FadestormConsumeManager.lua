@@ -136,7 +136,7 @@ local function main()
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
 	
-	local function empty_table() return { } end
+	local function default_table() return { } end
 	local function is_empty(t)
 		return next(Type.TABLE(t)) == nil end
 	
@@ -260,10 +260,10 @@ local function main()
 			
 		function Color.new(r, g, b, a)
 			return new({
-				r = clamp(floor(check(r, Type.NUMBER)), X, Y)
-				g = clamp(floor(check(g, Type.NUMBER)), X, Y)
-				b = clamp(floor(check(b, Type.NUMBER)), X, Y)
-				a = clamp(floor(check(b, Type.NUMBER, default_alpha)), X, Y)
+				r = clamp(floor(Type.NUMBER(r)), X, Y)
+				g = clamp(floor(Type.NUMBER(g)), X, Y)
+				b = clamp(floor(Type.NUMBER(b)), X, Y)
+				a = clamp(floor(Type.NUMBER(a, default_alpha)), X, Y)
 			})
 		end
 		
@@ -329,7 +329,7 @@ local function main()
 			return by_name[lower(trim(check(item_name, Type.item)))] end
 		
 		-- @param [number] item_id In-game ID of the item
-		-- @return [table] Corresponding Item instance, or nil if DNE
+		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_id(item_id)
 			return by_id[check(item_id, Type.NUMBER)] end
 		
@@ -349,38 +349,36 @@ local function main()
 		-- @return [string] Name of the item
 		-- @return [string] In-game item hyperlink
 		-- @return [string] In-game item icon file path
+		-- @return [boolean] True if the item is soulbound
 		function proto:get_info()
 			--[[
 			-- 01: itemName, 02: itemLink, 03: itemQuality, 04: itemLevel, 05: itemMinLevel, 06: itemType
 			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
 			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
 			]]--
-			local name, link, _, _, _, _, _, _, _, _, texture = GetItemInfo(self.item_id)
-			return name, link, texture
+			local name, link, _, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(self.item_id)
+			return name, link, texture, bound
 		end
+
+		-- TSM addon can provide information of items across your whole account
+		local function get_all_item_counts_wow(item_id) return GetItemCount(item_id, true) end
+		local function get_all_item_counts_tsm(item_id)
+			return sum({ TSM_API.GetPlayerTotals(format("i:%d", item_id)) }) end
 		
-		-- Retrieves item counts for a specified item using TSM's API
-		local function get_tsm_item_counts(item_id)
-			local bag_count = GetItemCount(item_id)
-			local bank_count = GetItemCount(item_id, true) - bag_count
-			return bag_count, bank_count
-		end
-		
-		-- Retrieves item counts for a specified item using WoW's API
-		local function get_wow_item_counts(item_id)
-			local bag_count = GetItemCount(item_id)
-			local total = sum({ TSM_API.GetPlayerTotals("i:" .. tostring(item_id)) })
-			return bag_count, total - bag_count
-		end
-		
-		-- Ideally TSM is installed and we can get other character's info
-		local get_item_counts = (TSM and TSM_API and TSM_API.GetPlayerTotals)
-			and get_tsm_item_counts or get_wow_item_counts
+		local get_all_item_counts = (function()
+			return (TSM_API and TSM_API.GetPlayerTotals) 
+				and get_all_item_counts_tsm or get_all_item_counts_wow
+		end)()
 		
 		-- @return [number] Quantity of the item in the player's bags
 		-- @return [number] Quantity of the item outside of the player's bags
 		function proto:get_supply()
-			return get_item_counts(self.item_id)
+			local item_id = self.item_id
+			local bag_count = GetItemCount(item_id)
+			if select(4, proto:get_info()) then -- Soulbound?
+				-- Don't count soulbound items from other characters
+				return bag_count, get_all_item_counts_wow(item_id) - bag_count end
+			return bag_count, get_all_item_counts(item_id) - bag_count
 		end
 		
 		-- Override table for __index reference
