@@ -137,12 +137,11 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local function default_table() return { } end
-	local function is_empty(t)
-		return next(Type.TABLE(t)) == nil end
-	
+	local function is_empty(t) return next(Type.TABLE(t)) == nil end
+
 	local function trim(s) 
 		Type.STRING(s):match("^%s*(.-)%s*$") end
-		
+
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
 	
@@ -159,8 +158,7 @@ local function main()
 		for k, v in pairs(Type.TABLE(tbl)) do
 			local a, b = cb(k, v)
 			-- Allow nil key mappings to be skipped
-			if a ~= nil then
-				t[a] = b end
+			if a ~= nil then t[a] = b end
 		end
 		return t
 	end
@@ -191,8 +189,8 @@ local function main()
 	-- @return [function] Constructor to create instances of the class
 	-- @return [table] Instance metatable
 	local function Class(static, proto)
-		static = check(static, Type.TABLE, empty_table)
-		proto = check(proto, Type.TABLE, empty_table)
+		static = default.TABLE(static, empty_table)
+		proto = default.TABLE(proto, empty_table)
 		local proto_mt = { 
 			__index = proto,
 			__metatable = false
@@ -202,7 +200,7 @@ local function main()
 		local instances = setmetatable({ }, { __mode = "k" })
 
 		local function new(o)
-			local obj = setmetatable(check(o, Type.TABLE, empty_table), mt)
+			local obj = setmetatable(default.TABLE(o, empty_table), mt)
 			instances[obj] = true -- Enable tracking of class instances
 			return obj
 		end
@@ -210,8 +208,7 @@ local function main()
 		-- @param [table] obj Object instance to check
 		-- @return [boolean] True if the object is a class instance
 		function static.is_instance(obj)
-			return instances[check(obj, Type.TABLE)]
-		end
+			return instances[Type.TABLE(obj)] end
 
 		return static, proto, new, mt
 	end
@@ -220,7 +217,7 @@ local function main()
 	-- @param (optional) [table] static Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or static param if originally provided
 	local function Enum(assigner, static)
-		static = check(static, Type.TABLE, empty_table)
+		static = default.TABLE(static, empty_table)
 		local ordinal = 1
 		local proxy = setmetatable({ }, {
 			__newindex = function(_, key, value)
@@ -302,8 +299,6 @@ local function main()
 		--OLIVE = Color.new(128, 128, 0),
 	}
 	
-
-	
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
     ----------------------------------------------------------------------
@@ -321,25 +316,25 @@ local function main()
 		-- @param [table] item Implicit Item instance
 		-- @return [string] Category in which the item is classified as
 		local function category(item)
-			return category_by_item[check(item, Type.TABLE)] end
+			return category_by_item[Type.TABLE(item)] end
 		
 		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_name(item_name)
-			return by_name[lower(trim(check(item_name, Type.item)))] end
+			return by_name[lower(trim(Type.STRING(item_name)))] end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_id(item_id)
-			return by_id[check(item_id, Type.NUMBER)] end
+			return by_id[Type.NUMBER(item_id)] end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
 		-- @return [table] Item instance
 		function Item:new(item_id, spell_id)
-			local obj = new({ item_id = check(item_id, Type.NUMBER) })
+			local obj = new({ item_id = Type.NUMBER(item_id) })
 			if spell_id ~= nil then
-				obj.spell_id = check(spell_id, Type.NUMBER) end
+				obj.spell_id = Type.NUMBER(spell_id) end
 			by_id[item_id] = obj -- Allow reverse lookups
 			if not item_cached(item_id) then
 				pending_cache_ids[item_id] = true end
@@ -388,8 +383,7 @@ local function main()
 		
 		function mt.__index(tbl, key)
 			local handler = index_override[key]
-			if handler ~= nil then
-				return handler(tbl)
+			if handler ~= nil then return handler(tbl)
 			else return rawget(proto, key) end
 		end
 		
@@ -419,7 +413,7 @@ local function main()
 		-- @param [number] item_id In-game Item ID to check if cached, or to cache
 		-- @return [boolean] true, if Item ID is cached
 		function Item.cache(item_id)
-			if item_cached(check(item_id, Type.NUMBER)) then
+			if item_cached(Type.NUMBER(item_id)) then
 				pending_cache_ids[item_ids] = nil
 				return true
 			end
@@ -669,9 +663,9 @@ local function main()
 		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item, prefs)
-			local aura_id = check(item, Type.TABLE).spell_id
+			local aura_id = Type.TABLE(item).spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
-			return severity_by_buff(aura_id, check(prefs, Type.TABLE).low_duration_thresh)
+			return severity_by_buff(aura_id, Type.TABLE(prefs).low_duration_thresh)
 		end
 		
 		-- Measures the severity of a consumable's remaining supply
@@ -681,13 +675,11 @@ local function main()
 		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item, prefs)
-			local req_quantity = check(prefs, Type.TABLE)
-				.quantity_by_item[check(item, Type.TABLE)]
+			local quantities = Type.TABLE(prefs).quantity_by_item
+			local req_quantity = quantities[Type.TABLE(item)]
 			local bags, elsewhere = item:get_supply()
-			if bags >= req_quantity then
-				return Severity.STABLE end
-			if bags + elsewhere >= req_quantity then
-				return Severity.WARNING end
+			if bags >= req_quantity then return Severity.STABLE end
+			if bags + elsewhere >= req_quantity then return Severity.WARNING end
 			return Severity.CRITICAL
 		end
 		
@@ -695,8 +687,8 @@ local function main()
 		-- @param [table] marker Severity to be applied to the marker of the token
 		-- @return [string] Token signifying this severity combination
 		function Severity.token(status, marker)
-			marker = tostring(marker) -- avoid double-calling tostring
-			return format("%s %s %s", marker, status, marker)
+			marker = tostring(Type.TABLE(marker)) -- avoid double-calling tostring
+			return format("%s %s %s", marker, Type.TABLE(status), marker)
 		end
 		
 		return Severity
@@ -719,8 +711,8 @@ local function main()
 		-- @return [table] Predicate instance
 		function Predicate:new(repr, evaluate)
 			return new({
-				repr = check(repr, Type.STRING),
-				evaluate = check(evaluate, Type.FUNCTION)
+				repr = Type.STRING(repr),
+				evaluate = Type.FUNCTION(evaluate)
 			})
 		end
 		
@@ -735,10 +727,10 @@ local function main()
 			e.IN_RESTED_AREA = IsResting,
 			-- Returns true if the specified item has buffing capability
 			e.ITEM_YIELDS_BUFF = function(item)
-				return check(item, Type.TABLE).spell_id ~= nil end,
+				return Type.TABLE(item).spell_id ~= nil end,
 			-- Returns true if at least one of the item is in the player's inventory
 			e.ITEM_IN_INVENTORY = function(item)
-				return GetItemCount(check(item, Type.TABLE).item_id) > 0 end,
+				return GetItemCount(Type.TABLE(item).item_id) > 0 end,
 		end, Predicate)
 	end)()
 	
@@ -753,8 +745,8 @@ local function main()
 		-- @return [table] Condition instance
 		function Condition:new(pred, negate)
 			return new({
-				pred = check(pred, Type.TABLE),
-				negate = check(negate, Type.BOOLEAN)
+				pred = Type.TABLE(pred),
+				negate = Type.BOOLEAN(negate)
 			})
 		
 		return Condition
@@ -771,13 +763,13 @@ local function main()
 		-- @param [table] List of conditions which are tested to all be true
 		-- @return [table] Rule instance
 		function Rule:new(conditions)
-			return new({ conditions = check(conditions, Type.TABLE) })
+			return new({ conditions = Type.TABLE(conditions) })
 		
 		-- @param [table] rules List of rule instances to evaluate
 		-- @param [varargs] ... Params to be passed into each rule
 		-- @return [boolean] True if all rules are passing
 		function Rule.all_passing(rules, ...)
-			for _, rule in ipairs(check(rules, Type.TABLE)) do
+			for _, rule in ipairs(Type.TABLE(rules)) do
 				if rule(...) ~= true then return false end end
 			return true
 		end
@@ -878,7 +870,7 @@ local function main()
 		end
 		
 		local function line_helper(tbl, str, length, dx, target)
-			Type.STRING(str, true)
+			Type.STRING(str)
 			if length == nil then
 				length = #str
 			else Type.NUMBER(length) end
@@ -937,7 +929,7 @@ local function main()
 		-- @param [table] color_filter List of header colors which should not be used
 		-- @return [string] Built text block
 		function proto:build(color_filter)
-			local header_colors = colors_by_header(self, check(color_filter, Type.TABLE))
+			local header_colors = colors_by_header(self, Type.TABLE(color_filter))
 			local block_width = self.longest
 			local block = { }
 			for _, header in ipairs(self.header) do
@@ -948,8 +940,11 @@ local function main()
 			return concat(block, "\n")
 		end
 		
+		-- @param [string] texture Texture to be converted into an in-line string
+		-- @param [number] width Width of the icon in the in-line string
 		function Text.inline_icon(texture, width)
-			return format("|T%s:%d:%d|t", texture, width, width) end
+			return format("|T%s:%d:%d|t", Type.STRING(texture), Type.NUMBER(width), width)
+		end
 		
 		return Text
 	end)()
