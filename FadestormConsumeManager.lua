@@ -43,29 +43,20 @@ local function main()
 		local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat = table.sort, table.insert, table.concat
+
+	local Palette -- Forward declaration
 	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
     ----------------------------------------------------------------------
 	
 	local AURA_NAME = "Fadestorm Consumable Manager"
-	
-	local Log = (function()
-		local function log_msg(level, msg)
-			print(format("[%s] %s: %s",
-				Palette.LIME(AURA_NAME), Palette.YELLOW(upper(level)), msg))
-		end
-		
-		return setmetatable({ }, {
-			__index = function(_, level)
-				return function(msg) log_msg(level, msg) end end
-		})
-	end)()
-	
+
 	local function type_mismatch(expected, actual)
-		Log.error(format("Type Mismatch | Expected=%s, Actual=%s", expected, actual))
+		error(Log.error(format(
+			"Type Mismatch | Expected=%s, Actual=%s", expected, actual)))
 	end
-	
+
 	local function type_check_strict(expected, value)
 		local actual = type(value)
 		if actual ~= expected then type_mismatch(expected, actual) end
@@ -80,6 +71,26 @@ local function main()
 	
 	local function type_check_safe(expected, value)
 		return type(value) == expected end
+
+	-- @param [function] func __index function to be placed into the metatable
+	-- @param (optional) [table] tbl Table to apply index to, or nil for new table
+	-- @return [table] Table with attached __index metatable
+	-- @return [table] Metatatble attached to the returned table
+	local function index(func, tbl)
+		type_check_strict("function", func)
+		if tbl ~= nil then type_check_strict("table", tbl)
+		else tbl = { } end
+		local mt = { __index = func }
+		return setmetatable(tbl, mt), mt
+	end
+
+	local Log = (function()
+		local function log_msg(level, msg)
+			print(format("[%s] %s: %s", 
+				Palette.LIME(AURA_NAME), Palette.YELLOW(upper(level)), msg)) end
+		return (index(function(_, level)
+			return function(msg) log_msg(level ,msg) end end))
+	end)()
 	
 	-- Creates a special table which translates indexing into strings.
 	-- 		e.g. t.my_index => "my_index"
@@ -88,10 +99,8 @@ local function main()
 	--		Returned value is passed back as the return value of all __index calls
 	local function stringify_keys_table(callback)
 		type_check_strict("function", callback)
-		return setmetatable({ }, {
-			__index = function(_, key)
-				return callback(type_check_strict("string", key)) end
-		})
+		return (index(function(_, key)
+			return callback(type_check_strict("string", key)) end))
 	end
 	
 	--[[
@@ -114,15 +123,13 @@ local function main()
 	local Type, check, default = (function()
 		local function make(checker)
 			-- Hands back a typecheck function for the expected type
-			local type_handlers = setmetatable({ }, {
-				__index = function(tbl, expected, ...)
-					local function handler(value)
-						return checker(expected, value, ...) end
-					-- Cache function into the table
-					rawset(tbl, expected, handler)
-					return handler
-				end
-			})
+			local type_handlers = index(function(tbl, expected)
+				local function handler(value, ...)
+					return checker(expected, value, ...) end
+				-- Cache function into the table
+				rawset(tbl, expected, handler)
+				return handler
+			end)
 			
 			-- Type keys should be all uppercase to avoid 'function' keyword
 			return stringify_keys_table(function(key)
@@ -135,7 +142,7 @@ local function main()
     ----------------------------------------------------------------------
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
-	
+
 	local function default_table() return { } end
 	local function is_empty(t) return next(Type.TABLE(t)) == nil end
 
@@ -189,9 +196,9 @@ local function main()
 	-- @return [function] Constructor to create instances of the class
 	-- @return [table] Instance metatable
 	local function Class(static, proto)
-		static = default.TABLE(static, empty_table)
-		proto = default.TABLE(proto, empty_table)
-		local proto_mt = { 
+		static = default.TABLE(static, default_table)
+		proto = default.TABLE(proto, default_table)
+		local mt = { 
 			__index = proto,
 			__metatable = false
 		}
@@ -200,7 +207,7 @@ local function main()
 		local instances = setmetatable({ }, { __mode = "k" })
 
 		local function new(o)
-			local obj = setmetatable(default.TABLE(o, empty_table), mt)
+			local obj = setmetatable(default.TABLE(o, default_table), mt)
 			instances[obj] = true -- Enable tracking of class instances
 			return obj
 		end
@@ -217,7 +224,7 @@ local function main()
 	-- @param (optional) [table] static Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or static param if originally provided
 	local function Enum(assigner, static)
-		static = default.TABLE(static, empty_table)
+		static = default.TABLE(static, default_table)
 		local ordinal = 1
 		local proxy = setmetatable({ }, {
 			__newindex = function(_, key, value)
@@ -225,7 +232,7 @@ local function main()
 				rawset(static, ordinal, value)
 				ordinal = ordinal + 1
 			end
-		}
+		})
 		
 		Type.FUNCTION(assigner)(proxy)
 		return static
@@ -234,7 +241,7 @@ local function main()
 	-- Color class for coloring text
 	local Color = (function()
 		local Color, proto, new, mt = Class()
-		
+
 		function mt:__tostring()
 			return format("Color(%d, %d, %d, %d)", self.r, self.g, self.b, self.a)
 		end
@@ -249,25 +256,25 @@ local function main()
 		local function to_hex(c)
 			return format("%02x", clamp(c, X, Y))
 		end
-		
+
 		-- @return [string] Hex code for the color
 		function proto:hex_code()
 			return format("ff%s%s%s", to_hex(self.r), to_hex(self.g), to_hex(self.b))
 		end
-			
+
 		function Color.new(r, g, b, a)
 			return new({
-				r = clamp(floor(Type.NUMBER(r)), X, Y)
-				g = clamp(floor(Type.NUMBER(g)), X, Y)
-				b = clamp(floor(Type.NUMBER(b)), X, Y)
-				a = clamp(floor(Type.NUMBER(a, default_alpha)), X, Y)
+				r = clamp(floor(Type.NUMBER(r)), X, Y),
+				g = clamp(floor(Type.NUMBER(g)), X, Y),
+				b = clamp(floor(Type.NUMBER(b)), X, Y),
+				a = clamp(floor(default.NUMBER(a, default_alpha)), X, Y),
 			})
 		end
 		
 		return Color
 	end)()
 	
-	local Palette = {
+	Palette = { -- Forward declare for 'Log' function
 		RED = Color.new(255, 0, 0),
 		GREEN = Color.new(0, 255, 0),
 		TURQUOISE = Color.new(64, 224, 208),
@@ -430,6 +437,7 @@ local function main()
 				local iter, tbl, key = pairs(pending_cache_ids)
 				local k, v = iter(tbl, nil)
 				if k == nil then -- No items remain uncached
+					Log.trace("building database")
 					build_database()
 					strategy = function() return true end
 					return true
@@ -722,15 +730,15 @@ local function main()
 				local z_types = { party = true, raid = true, scenario = true }
 				return function()
 					return z_types[(select(2, GetInstanceInfo()))] ~= nil end
-			end)(),
+			end)()
 			-- Returns true if the player is currently in a city or inn
-			e.IN_RESTED_AREA = IsResting,
+			e.IN_RESTED_AREA = IsResting
 			-- Returns true if the specified item has buffing capability
 			e.ITEM_YIELDS_BUFF = function(item)
-				return Type.TABLE(item).spell_id ~= nil end,
+				return Type.TABLE(item).spell_id ~= nil end
 			-- Returns true if at least one of the item is in the player's inventory
 			e.ITEM_IN_INVENTORY = function(item)
-				return GetItemCount(Type.TABLE(item).item_id) > 0 end,
+				return GetItemCount(Type.TABLE(item).item_id) > 0 end
 		end, Predicate)
 	end)()
 	
@@ -748,6 +756,7 @@ local function main()
 				pred = Type.TABLE(pred),
 				negate = Type.BOOLEAN(negate)
 			})
+		end
 		
 		return Condition
 	end)()
@@ -763,7 +772,7 @@ local function main()
 		-- @param [table] List of conditions which are tested to all be true
 		-- @return [table] Rule instance
 		function Rule:new(conditions)
-			return new({ conditions = Type.TABLE(conditions) })
+			return new({ conditions = Type.TABLE(conditions) }) end
 		
 		-- @param [table] rules List of rule instances to evaluate
 		-- @param [varargs] ... Params to be passed into each rule
@@ -863,7 +872,7 @@ local function main()
 			return new({
 				headers = { },
 				lines_by_header = setmetatable({ }, {
-					__index = empty_table
+					__index = default_table
 				}),
 				longest = 0
 			})
@@ -954,14 +963,19 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local function handle_fcm_show()
+		Log.trace("FCM Show 0")
 		if Item.ready() then -- Ensure all item are cached
+			Log.trace("FCM Show 1")
 			local prefs = Preference:get()
+			Log.trace("FCM Show 2")
 			local items = prefs:filter_items()
+			Log.trace("FCM Show 3")
 			if is_empty(items) then return end -- User has no items to display
 			
 			local block = Text:new()
 			print("Testing Run.")
 		end
+		Log.trace("FCM Show -1")
 	end
 	
 	local function handle_fcm_hide()
