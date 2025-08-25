@@ -146,10 +146,24 @@ local function main()
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
 
+	-- Creates a table in which missing keys are assigned a value
+	-- @param [function] [?] function(key)
+	local function default_table(callback)
+		Type.FUNCTION(callback)
+		return index(function(tbl, key)
+			local value = callback(key)
+			if value ~= nil then
+				rawset(tbl, key, value)
+				return value
+			end
+		end)
+	end
+
 	-- @param [...] return values from ipairs or pairs
 	-- @param [function] callback: [boolean] function(key, value)
 	-- @return [table] filtered table values
 	local function filter(iter, state, key, callback)
+		Type.FUNCTION(callback)
 		local t = { }
 		for k, v in iter, state, key do
 			if callback(k, v) == true then
@@ -161,11 +175,33 @@ local function main()
 	-- @param [function] callback: [k, v] function(key, value)
 	-- @return [table] mapped table values
 	local function mapper(iter, state, key, callback)
+		Type.FUNCTION(callback)
 		local t = { }
 		for k, v in iter, state, key do
 			local a, b = callback(k, v)
 			if a ~= nil then t[a] = b end end
 		return t
+	end
+
+	-- @param [...] return values from ipairs or pairs
+	-- @param [function] callback: [?] function(key, value)
+	-- @return [table] Map[group, Map[key, value]]
+	local function grouper(iter, state, key, callback)
+		Type.FUNCTION(callback)
+		local groups = default_table(empty_table)
+		for k, v in iter, state, key do
+			local grp = callback(k, v)
+			if grp ~= nil then -- Skip groups that evaluate to nil
+				groups[grp][k] = v end
+		end
+		return groups
+	end
+	
+	-- Allows iteration over a table without exposing the underlying table
+	local function iter(iter, state, key)
+		local function iterator(_, k)
+			return iter(state, k) end
+		return iterator, nil, key
 	end
 	
 	local function sum(t)
@@ -316,8 +352,15 @@ local function main()
 		local Item, proto, new, mt = Class()
 		
 		local by_id = { } -- Map[item_id, Item]
-		local by_category = { } -- Map[Item, SortedList[Item]]
 		local category_by_item = { } -- Map[Item, category]
+
+		-- Map[Item, SortedList[Item]] - Sorted after 
+		local by_category = default_table(empty_table)
+
+
+
+
+
 
 		local categories = { }, { }
 		
