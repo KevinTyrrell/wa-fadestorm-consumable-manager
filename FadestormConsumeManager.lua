@@ -24,17 +24,11 @@ local function main()
 	frame causes multiple triggers of 'FCM_SHOW'/'FCM_HIDE', causing disaster]]--
 	local AURA_LOADED = "FCM_WEAK_AURA_LOADED"
 	if not _G[AURA_LOADED] then
-		local function char_frame_show()
-			WeakAuras.ScanEvents("FCM_SHOW")
-		end
-		
-		local function char_frame_hide()
-			WeakAuras.ScanEvents("FCM_HIDE")
-		end
-		
-		CharacterFrame:HookScript("OnShow", char_frame_show)
-		CharacterFrame:HookScript("OnHide", char_frame_hide)
-		
+		-- Convert WoW API events into WeakAura triggers
+		CharacterFrame:HookScript("OnShow", function()
+			WeakAuras.ScanEvents("FCM_SHOW") end)
+		CharacterFrame:HookScript("OnHide", function()
+			WeakAuras.ScanEvents("FCM_HIDE") end)
 		_G[AURA_LOADED] = true
 	end
 	
@@ -151,23 +145,34 @@ local function main()
 
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
+
+	-- @param [...] return values from ipairs or pairs
+	-- @param [function] callback: [boolean] function(key, value)
+	-- @return [table] filtered table values
+	local function filter(iter, state, key, callback)
+		local t = { }
+		for k, v in iter, state, key do
+			if callback(k, v) == true then
+				t[k] = v end end
+		return t
+	end
+
+	-- @param [...] return values from ipairs or pairs
+	-- @param [function] callback: [k, v] function(key, value)
+	-- @return [table] mapped table values
+	local function mapper(iter, state, key, callback)
+		local t = { }
+		for k, v in iter, state, key do
+			local a, b = callback(k, v)
+			if a ~= nil then t[a] = b end end
+		return t
+	end
 	
 	local function sum(t)
 		local s = 0
 		for _, n in ipairs(Type.TABLE(t)) do
 			s = s + Type.NUMBER(n) end
 		return s
-	end
-	
-	local function mapper(tbl, cb)
-		Type.FUNCTION(cb)
-		local t = { }
-		for k, v in pairs(Type.TABLE(tbl)) do
-			local a, b = cb(k, v)
-			-- Allow nil key mappings to be skipped
-			if a ~= nil then t[a] = b end
-		end
-		return t
 	end
 	
 	--[[
@@ -226,14 +231,11 @@ local function main()
 	local function Enum(assigner, static)
 		static = default.TABLE(static, default_table)
 		local ordinal = 1
-		local proxy = setmetatable({ }, {
-			__newindex = function(_, key, value)
-				rawset(static, key, value)
-				rawset(static, ordinal, value)
-				ordinal = ordinal + 1
-			end
-		})
-		
+		local proxy = index(function(key, value)
+			rawset(static, key, value)
+			rawset(static, ordinal, value)
+			ordinal = ordinal + 1
+		end)
 		Type.FUNCTION(assigner)(proxy)
 		return static
 	end
@@ -312,18 +314,15 @@ local function main()
 	
 	local Item = (function()
 		local Item, proto, new, mt = Class()
-			
-		-- Reverse maps to find item object instances
-		local by_id, by_name, by_category = { }, { }, { }
-		local category_by_item, categories = { }, { }
+		
+		local by_id = { } -- Map[item_id, Item]
+		local by_category = { } -- Map[Item, SortedList[Item]]
+		local category_by_item = { } -- Map[Item, category]
+
+		local categories = { }, { }
 		
 		-- Holds item IDs which have yet to be cached
 		local pending_cache_ids = { }
-		
-		-- @param [table] item Implicit Item instance
-		-- @return [string] Category in which the item is classified as
-		local function category(item)
-			return category_by_item[Type.TABLE(item)] end
 		
 		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil if DNE
@@ -332,8 +331,14 @@ local function main()
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @return [table] Corresponding Item instance, or nil if DNE
-		function Item.by_id(item_id)
-			return by_id[Type.NUMBER(item_id)] end
+		function Item.by_id(item_id) return by_id[Type.NUMBER(item_id)] end
+
+		-- @param [number] item_id In-game Item ID to ensure is cached
+		function Item.cache(item_id)
+			if item_cached(Type.NUMBER(item_id)) then
+				pending_cache_ids[item_ids] = nil
+			else cache_item(item_id) end
+		end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
@@ -347,26 +352,12 @@ local function main()
 				pending_cache_ids[item_id] = true end
 			return obj
 		end
-		
-		-- @return [string] Name of the item
-		-- @return [string] In-game item hyperlink
-		-- @return [string] In-game item icon file path
-		-- @return [boolean] True if the item is soulbound
-		function proto:get_info()
-			--[[
-			-- 01: itemName, 02: itemLink, 03: itemQuality, 04: itemLevel, 05: itemMinLevel, 06: itemType
-			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
-			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
-			]]--
-			local name, link, _, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(self.item_id)
-			return name, link, texture, bound
-		end
 
 		-- TSM addon can provide information of items across your whole account
-		local function get_all_item_counts_wow(item_id) return GetItemCount(item_id, true) end
+		local function get_all_item_counts_wow(item_id)
+			return GetItemCount(item_id, true) end -- 2nd param includes bank
 		local function get_all_item_counts_tsm(item_id)
 			return sum({ TSM_API.GetPlayerTotals(format("i:%d", item_id)) }) end
-		
 		local get_all_item_counts = (function()
 			return (TSM_API and TSM_API.GetPlayerTotals) 
 				and get_all_item_counts_tsm or get_all_item_counts_wow
@@ -382,18 +373,25 @@ local function main()
 				return bag_count, get_all_item_counts_wow(item_id) - bag_count end
 			return bag_count, get_all_item_counts(item_id) - bag_count
 		end
-		
-		-- Override table for __index reference
-		local index_override = {
-			category = category
-		}
-		
-		function mt.__index(tbl, key)
-			local handler = index_override[key]
-			if handler ~= nil then return handler(tbl)
-			else return rawget(proto, key) end
+
+		-- @return [string] Name of the item
+		-- @return [string] In-game item hyperlink
+		-- @return [string] In-game item icon file path
+		-- @return [boolean] True if the item is soulbound
+		function proto:get_info()
+			--[[
+			-- 01: itemName, 02: itemLink, 03: itemQuality, 04: itemLevel, 05: itemMinLevel, 06: itemType
+			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
+			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
+			]]--
+			local name, link, _, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(self.item_id)
+			return name, link, texture, bound
 		end
+
+		-- @return [string] Category in which classifies the item
+		function proto:category() return category_by_item[self] end
 		
+		-- TODO: flagged for refactoring
 		-- Sorts each category by name & maps names->items
 		local function organize_names(items)
 			local names = mapper(items, function(_, item)
@@ -405,31 +403,18 @@ local function main()
 				return names[a] < names[b] end)
 		end
 		
+		-- TODO: flagged for refactoring
 		-- Groups items into categories & enables by_name lookups
 		local function build_database()
-			setmetatable(by_category, { __index = function() return { } end })
-			for i, category in pairs(category_by_item) do
-				insert(by_category[category], i)
+			index(default_table, by_category)
+			for item, category in pairs(category_by_item) do
+				insert(by_category[category], item)
 				insert(categories, category)
 			end
 			for _, items in pairs(setmetatable(by_category, nil)) do
 				organize_names(items) end
 			sort(categories)
 		end
-		
-		-- @param [number] item_id In-game Item ID to check if cached, or to cache
-		-- @return [boolean] true, if Item ID is cached
-		function Item.cache(item_id)
-			if item_cached(Type.NUMBER(item_id)) then
-				pending_cache_ids[item_ids] = nil
-				return true
-			end
-			cache_item(item_id)
-			return false
-		end
-		
-		-- Allows iteration over Item categories
-		Item.categories = categories
 		
 		-- @return [boolean] True if the database has all items cached
 		Item.ready = (function(strategy)
@@ -904,6 +889,7 @@ local function main()
 			return self
 		end
 		
+		-- TODO: flagged for refactoring
 		-- Assigns a unique color to each header, with filter support
 		local function colors_by_header(instance, color_filter)
 			local filter = mapper(color_filter, function(_, c) return c, true end) -- Set
@@ -984,11 +970,9 @@ local function main()
 	
 	-- Receives cached item information
 	local function handle_item_data(item_id, success)
-		if success then 
-			Item.cache(item_id)
-		elseif not Item.cache(item_id) then
-			Log.warn("failed to query item ID: " .. tostring(item_id))
-		end
+		Item.cache(item_id)
+		if success ~= true then
+			Log.warn(format("server data failed for item ID: %d", item_id) end
 	end
     
     ----------------------------------------------------------------------
