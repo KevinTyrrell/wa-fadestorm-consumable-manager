@@ -138,6 +138,8 @@ local function main()
     ----------------------------------------------------------------------
 
 	local function default_table() return { } end
+	local function default_true() return true end
+	local function default_nil() return end
 	local function is_empty(t) return next(Type.TABLE(t)) == nil end
 
 	local function trim(s) 
@@ -199,6 +201,7 @@ local function main()
 	
 	-- Allows iteration over a table without exposing the underlying table
 	local function iter(iter, state, key)
+		if state == nil then return default_nil end
 		local function iterator(_, k)
 			return iter(state, k) end
 		return iterator, nil, key
@@ -351,21 +354,14 @@ local function main()
 	local Item = (function()
 		local Item, proto, new, mt = Class()
 		
+		local by_category = { } -- Map[Item, SortedList[Item]]
 		local by_id = { } -- Map[item_id, Item]
+		local by_name = { } -- Map[item_name, Item]
 		local category_by_item = { } -- Map[Item, category]
-
-		-- Map[Item, SortedList[Item]] - Sorted after 
-		local by_category = default_table(empty_table)
-
-
-
-
-
-
-		local categories = { }, { }
+		local categories = { } -- SortedList[category]
 		
 		-- Holds item IDs which have yet to be cached
-		local pending_cache_ids = { }
+		local pending_by_id = { }
 		
 		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil if DNE
@@ -379,9 +375,14 @@ local function main()
 		-- @param [number] item_id In-game Item ID to ensure is cached
 		function Item.cache(item_id)
 			if item_cached(Type.NUMBER(item_id)) then
-				pending_cache_ids[item_ids] = nil
+				pending_by_id[item_ids] = nil
 			else cache_item(item_id) end
 		end
+
+		-- Retrieves an iterator of all items for the category
+		-- @param [string] category Category name
+		function Item.by_category(category)
+			return iter(ipairs(by_category[Type.STRING(category)])) end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
@@ -392,7 +393,7 @@ local function main()
 				obj.spell_id = Type.NUMBER(spell_id) end
 			by_id[item_id] = obj -- Allow reverse lookups
 			if not item_cached(item_id) then
-				pending_cache_ids[item_id] = true end
+				pending_by_id[item_id] = true end
 			return obj
 		end
 
@@ -433,235 +434,222 @@ local function main()
 
 		-- @return [string] Category in which classifies the item
 		function proto:category() return category_by_item[self] end
-		
-		-- TODO: flagged for refactoring
-		-- Sorts each category by name & maps names->items
-		local function organize_names(items)
-			local names = mapper(items, function(_, item)
-				local name = lower((GetItemInfo(item)))
-				by_name[name] = item
-				return item, name
-			end)
-			sort(items, function(a, b)
-				return names[a] < names[b] end)
-		end
-		
-		-- TODO: flagged for refactoring
-		-- Groups items into categories & enables by_name lookups
-		local function build_database()
-			index(default_table, by_category)
-			for item, category in pairs(category_by_item) do
-				insert(by_category[category], item)
-				insert(categories, category)
-			end
-			for _, items in pairs(setmetatable(by_category, nil)) do
-				organize_names(items) end
-			sort(categories)
+
+		-- Collects names of all items in the database and alphabetizes items
+		local function process_database()
+			for item in pairs(by_category) do
+				by_name[lower((GetItemInfo(item.item_id)))] = item
+			for _, items in pairs(by_category) do
+				sort(items, function(k, v)
+					return (GetItemInfo(k.item_id)) < (GetItemInfo(v.item_id)) end) end
 		end
 		
 		-- @return [boolean] True if the database has all items cached
-		Item.ready = (function(strategy)
+		Item.ready = (function(strategy) -- Abusing param as a local
 			strategy = function()
-				local iter, tbl, key = pairs(pending_cache_ids)
-				local k, v = iter(tbl, nil)
-				if k == nil then -- No items remain uncached
-					Log.trace("building database")
-					build_database()
-					strategy = function() return true end
+				-- All items are cached, complete database
+				if is_empty(pending_by_id) then
+					process_database()
+					strategy = default_true
 					return true
 				end
-				
-				repeat -- Loop manually from 2nd pairing
-					k, v = iter(tbl, k)
-					cache_item(k) -- Request item data from the server
-				until k == nil
+
+				for item_id in pairs(pending_by_id) do
+					cache_item(item_id) end
 				return false
 			end
 			
 			return function() return strategy() end
 		end)()
-		
-		for category, items in pairs({ -- Init database
-			["Flask"] = {
-				Item:new(13510, 17626), -- Flask of the Titans
-				Item:new(13511, 17627), -- Flask of Distilled Wisdom
-				Item:new(13512, 17628), -- Flask of Supreme Power
-				Item:new(13513, 17629), -- Flask of Chromatic Resistance
-				Item:new(13506), -- Flask of Petrification
-			},
-			["Protection"] = {
-				Item:new(13461, 17549), -- Greater Arcane Protection Potion
-				Item:new(13457, 17543), -- Greater Fire Protection Potion
-				Item:new(13456, 17544), -- Greater Frost Protection Potion
-				Item:new(13458, 17546), -- Greater Nature Protection Potion
-				Item:new(13459, 17548), -- Greater Shadow Protetion Potion
-				Item:new(13460, 17545), -- Greater Holy Protection Potion
-				Item:new(6052), -- Nature Protection Potion
-				Item:new(6050), -- Frost Protection Potion
-				Item:new(6049), -- Fire Protection Potion
-				Item:new(6048), -- Shadow Protection Potion
-				Item:new(6051), -- Holy Protection Potion
-				Item:new(4376), -- Flame Deflector
-				Item:new(4386), -- Ice Deflector
-			},
-			["Elixir"] = {
-				Item:new(13445, 11348), -- Elixir of Superior Defense
-				Item:new(20004, 24361), -- Major Troll's Blood Potion
-				Item:new(3825, 3593), -- Elixir of Fortitude
-				Item:new(13452, 17538), -- Elixir of the Mongoose
-				Item:new(20007, 24363), -- Mageblood Potion
-				Item:new(9206, 11405), -- Elixir of Giants
-				Item:new(12820, 17038), -- Winterfall Firewater
-				Item:new(9088, 11371), -- Gift of Arthas
-				Item:new(13454, 17539), -- Greater Arcane Elixir
-				Item:new(9264, 11474), -- Elixir of Shadow Power
-				Item:new(21546, 26276), -- Elixir of Greater Firepower
-				Item:new(17708, 21920), -- Elixir of Frost Power
-				Item:new(1177, 673), -- Oil of Olaf
-				Item:new(23211, 29334), -- Toasted Smorc
-				Item:new(23326, 29333), -- Midsummer Sausage
-				Item:new(23435, 29335), -- Elderberry Pie
-				Item:new(23327, 29332), -- Fire-toasted Bun
-				Item:new(22239, 27722), -- Sweet Surprise
-				Item:new(22237, 27723), -- Dark Desire
-				Item:new(22236, 27720), -- Buttermilk Delight
-				Item:new(22238, 27721), -- Very Berry Cream
-			},
-			["Juju"] = {
-				Item:new(12457, 16325), -- Juju Chill
-				Item:new(12460, 16329), -- Juju Might
-				Item:new(12450), -- Juju Flurry
-				Item:new(12459), -- Juju Escape
-				Item:new(12455, 16326), -- Juju Ember
-				Item:new(12458, 16327), -- Juju Guile
-				Item:new(12451, 16323), -- Juju Power
-			},
-			["Combat"] = {
-				Item:new(13446), -- Major Healing Potion
-				Item:new(13444), -- Major Mana Potion
-				Item:new(18253), -- Major Rejuvenation Potion
-				Item:new(9144), -- Wildvine Potion
-				Item:new(18841), -- Combat Mana Potion
-				Item:new(13443), -- Superior Mana Potion
-				Item:new(13442), -- Mighty Rage Potion
-				Item:new(3387), -- Limited Invulnerability Potion
-				Item:new(5634), -- Free Action Potion
-				Item:new(20008), -- Living Action Potion
-				Item:new(20520), -- Dark Rune
-				Item:new(12662), -- Demonic Rune
-				Item:new(11952), -- Night Dragon's Breath
-				Item:new(11951), -- Whipper Root Tuber
-				Item:new(7676), -- Thistle Tea
-				Item:new(16023), -- Masterwork Target Dummy
-				Item:new(4392), -- Advanced Target Dummy
-				Item:new(14530), -- Heavy Runecloth Bandage
-				Item:new(1322), -- Fishliver Oil
-				Item:new(2459), -- Swiftness Potion
-				Item:new(13455, 17540), -- Greater Stoneshield Potion
-				Item:new(20002), -- Greater Dreamless Sleep Potion
-				Item:new(12190), -- Dreamless Sleep Potion
-			},
-			["Cleanse"] = {
-				Item:new(3386), -- Elixir of Poison Resistance
-				Item:new(19440), -- Powerful Anti-Venom
-				Item:new(2633), -- Jungle Remedy
-				Item:new(6452), -- Anti-Venom
-				Item:new(6453), -- Strong Anti-Venom
-				Item:new(9030), -- Restorative Potion
-				Item:new(9322), -- Undamaged Venom Sac
-				Item:new(13462), -- Purification Potion
-				Item:new(19183), -- Hourglass Sand
-			},
-			["Un'goro"] = {
-				Item:new(11567, 15279), -- Crystal Spire
-				Item:new(11563, 15231), -- Crystal Force
-				Item:new(11566), -- Crystal Charge
-				Item:new(11562), -- Crystal Restore
-				Item:new(11564, 15233), -- Crystal Ward
-				Item:new(11565), -- Crystal Yield
-			},
-			["Misc"] = {
-				Item:new(5206, 5665), -- Bogling Root
-				Item:new(18297), -- Thornling Seed
-				Item:new(8529), -- Noggenfogger Elixir
-				Item:new(9172), -- Invisibility Potion
-				Item:new(3823), -- Lesser Invisibility Potion
-				Item:new(6372), -- Swim Speed Potion
-				Item:new(21519), -- Mistletoe
-				Item:new(184937), -- Chronoboon Displacer
-				Item:new(12384), -- Cache of Mau'ari
-				Item:new(21321), -- Red Qiraji Resonating Crystal
-				Item:new(21324), -- Yellow Qiraji Resonating Crystal
-				Item:new(21323), -- Green Qiraji Resonating Crystal
-				Item:new(21218), -- Blue Qiraji Resonating Crystal
-				Item:new(22754), -- Eternal Quintessence
-				Item:new(17333), -- Aqual Quintessence
-			},
-			["Enhancement"] = {
-				Item:new(3829), -- Frost Oil
-				Item:new(3824), -- Shadow Oil
-				Item:new(20749), -- Brilliant Wizard Oil
-				Item:new(20748), -- Brilliant Mana Oil
-				Item:new(23123), -- Blessed Wizard Oil
-				Item:new(23122), -- Consecrated Sharpening Stone
-				Item:new(18262), -- Elemental Sharpening Stone
-				Item:new(12404), -- Dense Sharpening Stone
-				Item:new(12643), -- Dense Weightstone
-			},
-			["Explosive"] = {
-				Item:new(8956), -- Oil of Immolation
-				Item:new(13180), -- Stratholme Holy Water
-				Item:new(10646), -- Goblin Sapper Charge
-				Item:new(18641), -- Dense Dynamite
-				Item:new(15993), -- Thorium Grenade
-				Item:new(4390), -- Iron Grenade
-				Item:new(16040), -- Arcane Bomb
-			},
-			["Unique"] = {
-				Item:new(8410, 10667), -- R.O.I.D.S.
-				Item:new(8412, 10669), -- Ground Scorpok Assay
-				Item:new(8423, 10692), -- Cerebral Cortex Compound
-				Item:new(8424, 10693), -- Gizzard Gum
-				Item:new(8411, 10668), -- Lung Juice Cocktail
-				Item:new(20079, 24382), -- Spirit of Zanza
-				Item:new(20080, 24417), -- Sheen of Zanza
-				Item:new(20081, 24383), -- Swiftness of Zanza
-				Item:new(184938), -- Supercharged Chronoboon Displacer
-			},
-			["Ammo"] = {
-				Item:new(12654), -- Doomshot
-				Item:new(13377), -- Miniature Cannon Balls
-				Item:new(11630), -- Rockshard Pellets
-				Item:new(19316), -- Ice Threaded Arrow
-				Item:new(19317), -- Ice Threaded Bullet
-				Item:new(18042), -- Thorium Headed Arrow
-				Item:new(15997), -- Thorium Shells
-			},
-			["Food"] = {
-				Item:new(13928, 18192), -- Grilled Squid
-				Item:new(20452, 24799), -- Smoked Desert Dumplings
-				Item:new(13931, 18194), -- Nightfin Soup
-				Item:new(18254, 22730), -- Runn Tum Tuber Surprise
-				Item:new(21023, 25661), -- Dirge's Kickin' Chimaerok Chops
-				Item:new(13813, 18141), -- Blessed Sunfruit Juice
-				Item:new(13810, 18125), -- Blessed Sunfruit
-				Item:new(18284, 22790), -- Kreeg's Stout Beatdown
-				Item:new(18269, 22789), -- Gordok Green Grog
-				Item:new(21151, 25804), -- Rumsey Rum Black Label
-				Item:new(13724), -- Enriched Manna Biscuit
-				Item:new(19301), -- Alterac Manna Biscuit
-			},
-			["Equipment"] = {
-				Item:new(15138), -- Onyxia Scale Cloak
-				Item:new(16309), -- Drakefire Amulet
-				Item:new(810), -- Hammer of the Northern Wind
-				Item:new(10761), -- Coldrage Dagger
+
+		local function init_database()
+			local item_dump = {
+				["Flask"] = {
+					Item:new(13510, 17626), -- Flask of the Titans
+					Item:new(13511, 17627), -- Flask of Distilled Wisdom
+					Item:new(13512, 17628), -- Flask of Supreme Power
+					Item:new(13513, 17629), -- Flask of Chromatic Resistance
+					Item:new(13506), -- Flask of Petrification
+				},
+				["Protection"] = {
+					Item:new(13461, 17549), -- Greater Arcane Protection Potion
+					Item:new(13457, 17543), -- Greater Fire Protection Potion
+					Item:new(13456, 17544), -- Greater Frost Protection Potion
+					Item:new(13458, 17546), -- Greater Nature Protection Potion
+					Item:new(13459, 17548), -- Greater Shadow Protetion Potion
+					Item:new(13460, 17545), -- Greater Holy Protection Potion
+					Item:new(6052), -- Nature Protection Potion
+					Item:new(6050), -- Frost Protection Potion
+					Item:new(6049), -- Fire Protection Potion
+					Item:new(6048), -- Shadow Protection Potion
+					Item:new(6051), -- Holy Protection Potion
+					Item:new(4376), -- Flame Deflector
+					Item:new(4386), -- Ice Deflector
+				},
+				["Elixir"] = {
+					Item:new(13445, 11348), -- Elixir of Superior Defense
+					Item:new(20004, 24361), -- Major Troll's Blood Potion
+					Item:new(3825, 3593), -- Elixir of Fortitude
+					Item:new(13452, 17538), -- Elixir of the Mongoose
+					Item:new(20007, 24363), -- Mageblood Potion
+					Item:new(9206, 11405), -- Elixir of Giants
+					Item:new(12820, 17038), -- Winterfall Firewater
+					Item:new(9088, 11371), -- Gift of Arthas
+					Item:new(13454, 17539), -- Greater Arcane Elixir
+					Item:new(9264, 11474), -- Elixir of Shadow Power
+					Item:new(21546, 26276), -- Elixir of Greater Firepower
+					Item:new(17708, 21920), -- Elixir of Frost Power
+					Item:new(1177, 673), -- Oil of Olaf
+					Item:new(23211, 29334), -- Toasted Smorc
+					Item:new(23326, 29333), -- Midsummer Sausage
+					Item:new(23435, 29335), -- Elderberry Pie
+					Item:new(23327, 29332), -- Fire-toasted Bun
+					Item:new(22239, 27722), -- Sweet Surprise
+					Item:new(22237, 27723), -- Dark Desire
+					Item:new(22236, 27720), -- Buttermilk Delight
+					Item:new(22238, 27721), -- Very Berry Cream
+				},
+				["Juju"] = {
+					Item:new(12457, 16325), -- Juju Chill
+					Item:new(12460, 16329), -- Juju Might
+					Item:new(12450), -- Juju Flurry
+					Item:new(12459), -- Juju Escape
+					Item:new(12455, 16326), -- Juju Ember
+					Item:new(12458, 16327), -- Juju Guile
+					Item:new(12451, 16323), -- Juju Power
+				},
+				["Combat"] = {
+					Item:new(13446), -- Major Healing Potion
+					Item:new(13444), -- Major Mana Potion
+					Item:new(18253), -- Major Rejuvenation Potion
+					Item:new(9144), -- Wildvine Potion
+					Item:new(18841), -- Combat Mana Potion
+					Item:new(13443), -- Superior Mana Potion
+					Item:new(13442), -- Mighty Rage Potion
+					Item:new(3387), -- Limited Invulnerability Potion
+					Item:new(5634), -- Free Action Potion
+					Item:new(20008), -- Living Action Potion
+					Item:new(20520), -- Dark Rune
+					Item:new(12662), -- Demonic Rune
+					Item:new(11952), -- Night Dragon's Breath
+					Item:new(11951), -- Whipper Root Tuber
+					Item:new(7676), -- Thistle Tea
+					Item:new(16023), -- Masterwork Target Dummy
+					Item:new(4392), -- Advanced Target Dummy
+					Item:new(14530), -- Heavy Runecloth Bandage
+					Item:new(1322), -- Fishliver Oil
+					Item:new(2459), -- Swiftness Potion
+					Item:new(13455, 17540), -- Greater Stoneshield Potion
+					Item:new(20002), -- Greater Dreamless Sleep Potion
+					Item:new(12190), -- Dreamless Sleep Potion
+				},
+				["Cleanse"] = {
+					Item:new(3386), -- Elixir of Poison Resistance
+					Item:new(19440), -- Powerful Anti-Venom
+					Item:new(2633), -- Jungle Remedy
+					Item:new(6452), -- Anti-Venom
+					Item:new(6453), -- Strong Anti-Venom
+					Item:new(9030), -- Restorative Potion
+					Item:new(9322), -- Undamaged Venom Sac
+					Item:new(13462), -- Purification Potion
+					Item:new(19183), -- Hourglass Sand
+				},
+				["Un'goro"] = {
+					Item:new(11567, 15279), -- Crystal Spire
+					Item:new(11563, 15231), -- Crystal Force
+					Item:new(11566), -- Crystal Charge
+					Item:new(11562), -- Crystal Restore
+					Item:new(11564, 15233), -- Crystal Ward
+					Item:new(11565), -- Crystal Yield
+				},
+				["Misc"] = {
+					Item:new(5206, 5665), -- Bogling Root
+					Item:new(18297), -- Thornling Seed
+					Item:new(8529), -- Noggenfogger Elixir
+					Item:new(9172), -- Invisibility Potion
+					Item:new(3823), -- Lesser Invisibility Potion
+					Item:new(6372), -- Swim Speed Potion
+					Item:new(21519), -- Mistletoe
+					Item:new(184937), -- Chronoboon Displacer
+					Item:new(12384), -- Cache of Mau'ari
+					Item:new(21321), -- Red Qiraji Resonating Crystal
+					Item:new(21324), -- Yellow Qiraji Resonating Crystal
+					Item:new(21323), -- Green Qiraji Resonating Crystal
+					Item:new(21218), -- Blue Qiraji Resonating Crystal
+					Item:new(22754), -- Eternal Quintessence
+					Item:new(17333), -- Aqual Quintessence
+				},
+				["Enhancement"] = {
+					Item:new(3829), -- Frost Oil
+					Item:new(3824), -- Shadow Oil
+					Item:new(20749), -- Brilliant Wizard Oil
+					Item:new(20748), -- Brilliant Mana Oil
+					Item:new(23123), -- Blessed Wizard Oil
+					Item:new(23122), -- Consecrated Sharpening Stone
+					Item:new(18262), -- Elemental Sharpening Stone
+					Item:new(12404), -- Dense Sharpening Stone
+					Item:new(12643), -- Dense Weightstone
+				},
+				["Explosive"] = {
+					Item:new(8956), -- Oil of Immolation
+					Item:new(13180), -- Stratholme Holy Water
+					Item:new(10646), -- Goblin Sapper Charge
+					Item:new(18641), -- Dense Dynamite
+					Item:new(15993), -- Thorium Grenade
+					Item:new(4390), -- Iron Grenade
+					Item:new(16040), -- Arcane Bomb
+				},
+				["Unique"] = {
+					Item:new(8410, 10667), -- R.O.I.D.S.
+					Item:new(8412, 10669), -- Ground Scorpok Assay
+					Item:new(8423, 10692), -- Cerebral Cortex Compound
+					Item:new(8424, 10693), -- Gizzard Gum
+					Item:new(8411, 10668), -- Lung Juice Cocktail
+					Item:new(20079, 24382), -- Spirit of Zanza
+					Item:new(20080, 24417), -- Sheen of Zanza
+					Item:new(20081, 24383), -- Swiftness of Zanza
+					Item:new(184938), -- Supercharged Chronoboon Displacer
+				},
+				["Ammo"] = {
+					Item:new(12654), -- Doomshot
+					Item:new(13377), -- Miniature Cannon Balls
+					Item:new(11630), -- Rockshard Pellets
+					Item:new(19316), -- Ice Threaded Arrow
+					Item:new(19317), -- Ice Threaded Bullet
+					Item:new(18042), -- Thorium Headed Arrow
+					Item:new(15997), -- Thorium Shells
+				},
+				["Food"] = {
+					Item:new(13928, 18192), -- Grilled Squid
+					Item:new(20452, 24799), -- Smoked Desert Dumplings
+					Item:new(13931, 18194), -- Nightfin Soup
+					Item:new(18254, 22730), -- Runn Tum Tuber Surprise
+					Item:new(21023, 25661), -- Dirge's Kickin' Chimaerok Chops
+					Item:new(13813, 18141), -- Blessed Sunfruit Juice
+					Item:new(13810, 18125), -- Blessed Sunfruit
+					Item:new(18284, 22790), -- Kreeg's Stout Beatdown
+					Item:new(18269, 22789), -- Gordok Green Grog
+					Item:new(21151, 25804), -- Rumsey Rum Black Label
+					Item:new(13724), -- Enriched Manna Biscuit
+					Item:new(19301), -- Alterac Manna Biscuit
+				},
+				["Equipment"] = {
+					Item:new(15138), -- Onyxia Scale Cloak
+					Item:new(16309), -- Drakefire Amulet
+					Item:new(810), -- Hammer of the Northern Wind
+					Item:new(10761), -- Coldrage Dagger
+				}
 			}
-		}) do
-			for _, item in ipairs(items) do
-				category_by_item[category] = item end
+			for category, items in pairs(item_dump) do
+				by_category[category] = items
+				for _, item in ipairs(items) do
+					category_by_item[category] = item end
+				insert(categories, category)
+			end
+			sort(categories, function(k, v) return k < v end)
 		end
 		
+		init_database()
 		return Item
 	end)()
 	
