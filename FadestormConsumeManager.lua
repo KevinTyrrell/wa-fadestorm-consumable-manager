@@ -38,7 +38,7 @@ local function main()
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat = table.sort, table.insert, table.concat
 
-	local Palette -- Forward declaration
+	local Palette, Log -- Forward declaration
 	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
@@ -77,14 +77,6 @@ local function main()
 		local mt = { __index = func }
 		return setmetatable(tbl, mt), mt
 	end
-
-	local Log = (function()
-		local function log_msg(level, msg)
-			print(format("[%s] %s: %s", 
-				Palette.LIME(AURA_NAME), Palette.YELLOW(upper(level)), msg)) end
-		return (index(function(_, level)
-			return function(msg) log_msg(level ,msg) end end))
-	end)()
 	
 	-- Creates a special table which translates indexing into strings.
 	-- 		e.g. t.my_index => "my_index"
@@ -96,7 +88,24 @@ local function main()
 		return (index(function(_, key)
 			return callback(type_check_strict("string", key)) end))
 	end
-	
+
+	Log = (function(strategy)
+		local MSG_FMT = "[%s] %s: %s"
+		local function log_msg_color(level, msg)
+			print(format(MSG_FMT, Palette.LIME(AURA_NAME), Palette.YELLOW(level), msg)) end
+		local function log_msg_white(level, msg)
+			print(format(MSG_FMT, AURA_NAME, level, msg)) end
+		strategy = function(level, msg)
+			if Palette == nil then -- May not be loaded in-time
+				return log_msg_white(level, msg) end
+			strategy = log_msg_color
+			log_msg_color(level, msg)
+		end
+
+		return stringify_keys_table(function(level)
+			return function(msg) strategy(upper(level), tostring(msg)) end end)
+	end)()
+
 	--[[
 	-- Typechecking Usage:
 	--
@@ -137,9 +146,9 @@ local function main()
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
 
-	local function default_table() return { } end
-	local function default_true() return true end
-	local function default_nil() return end
+	local function table_fn() return { } end
+	local function true_fn() return true end
+	local function nil_fn() return end
 	local function is_empty(t) return next(Type.TABLE(t)) == nil end
 
 	local function trim(s) 
@@ -190,18 +199,18 @@ local function main()
 	-- @return [table] Map[group, Map[key, value]]
 	local function grouper(iter, state, key, callback)
 		Type.FUNCTION(callback)
-		local groups = default_table(empty_table)
+		local groups = default_table(table_fn)
 		for k, v in iter, state, key do
 			local grp = callback(k, v)
 			if grp ~= nil then -- Skip groups that evaluate to nil
 				groups[grp][k] = v end
 		end
-		return groups
+		return setmetatable(groups)
 	end
 	
 	-- Allows iteration over a table without exposing the underlying table
 	local function iter(iter, state, key)
-		if state == nil then return default_nil end
+		if state == nil then return nil_fn end
 		local function iterator(_, k)
 			return iter(state, k) end
 		return iterator, nil, key
@@ -240,8 +249,8 @@ local function main()
 	-- @return [function] Constructor to create instances of the class
 	-- @return [table] Instance metatable
 	local function Class(static, proto)
-		static = default.TABLE(static, default_table)
-		proto = default.TABLE(proto, default_table)
+		static = default.TABLE(static, table_fn)
+		proto = default.TABLE(proto, table_fn)
 		local mt = { 
 			__index = proto,
 			__metatable = false
@@ -251,7 +260,7 @@ local function main()
 		local instances = setmetatable({ }, { __mode = "k" })
 
 		local function new(o)
-			local obj = setmetatable(default.TABLE(o, default_table), mt)
+			local obj = setmetatable(default.TABLE(o, table_fn), mt)
 			instances[obj] = true -- Enable tracking of class instances
 			return obj
 		end
@@ -268,7 +277,7 @@ local function main()
 	-- @param (optional) [table] static Class table to contain the constants, or nil to create
 	-- @return [table] Enum table, or static param if originally provided
 	local function Enum(assigner, static)
-		static = default.TABLE(static, default_table)
+		static = default.TABLE(static, table_fn)
 		local ordinal = 1
 		local proxy = index(function(key, value)
 			rawset(static, key, value)
@@ -375,7 +384,7 @@ local function main()
 		-- @param [number] item_id In-game Item ID to ensure is cached
 		function Item.cache(item_id)
 			if item_cached(Type.NUMBER(item_id)) then
-				pending_by_id[item_ids] = nil
+				pending_by_id[item_id] = nil
 			else cache_item(item_id) end
 		end
 
@@ -437,8 +446,15 @@ local function main()
 
 		-- Collects names of all items in the database and alphabetizes items
 		local function process_database()
-			for item in pairs(by_category) do
-				by_name[lower((GetItemInfo(item.item_id)))] = item
+			--[[for item in pairs(by_category) do
+				by_name[lower((GetItemInfo(item.item_id)))] = item end]]--
+			for _, item in pairs(by_id) do
+				local name = (GetItemInfo(item.item_id))
+				name = lower(name)
+				by_name[name] = item
+				
+				--by_name[lower((GetItemInfo(item.item_id)))] = item 
+			end
 			for _, items in pairs(by_category) do
 				sort(items, function(k, v)
 					return (GetItemInfo(k.item_id)) < (GetItemInfo(v.item_id)) end) end
@@ -450,7 +466,7 @@ local function main()
 				-- All items are cached, complete database
 				if is_empty(pending_by_id) then
 					process_database()
-					strategy = default_true
+					strategy = true_fn
 					return true
 				end
 
@@ -887,9 +903,7 @@ local function main()
 		function Text:new()
 			return new({
 				headers = { },
-				lines_by_header = setmetatable({ }, {
-					__index = default_table
-				}),
+				lines_by_header = default_table(table_fn),
 				longest = 0
 			})
 		end
@@ -980,19 +994,14 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local function handle_fcm_show()
-		Log.trace("FCM Show 0")
 		if Item.ready() then -- Ensure all item are cached
-			Log.trace("FCM Show 1")
 			local prefs = Preference:get()
-			Log.trace("FCM Show 2")
 			local items = prefs:filter_items()
-			Log.trace("FCM Show 3")
-			if is_empty(items) then return end -- User has no items to display
+			--if is_empty(items) then return end -- User has no items to display
 			
 			local block = Text:new()
 			print("Testing Run.")
 		end
-		Log.trace("FCM Show -1")
 	end
 	
 	local function handle_fcm_hide()
@@ -1003,7 +1012,7 @@ local function main()
 	local function handle_item_data(item_id, success)
 		Item.cache(item_id)
 		if success ~= true then
-			Log.warn(format("server data failed for item ID: %d", item_id) end
+			Log.warn(format("server data failed for item ID: %d", item_id)) end
 	end
     
     ----------------------------------------------------------------------
