@@ -414,6 +414,8 @@ local function main()
 			else cache_item(item_id) end
 		end
 
+		function Item.categories() return iter(ipairs(categories)) end
+
 		-- Retrieves an iterator of all items for the category
 		-- @param [string] category Category name
 		function Item.by_category(category)
@@ -684,7 +686,7 @@ local function main()
 			for category, items in pairs(item_dump) do
 				by_category[category] = items
 				for _, item in ipairs(items) do
-					category_by_item[category] = item end
+					category_by_item[item] = category end
 				insert(categories, category)
 			end
 			sort(categories, function(k, v) return k < v end)
@@ -966,14 +968,16 @@ local function main()
 		local function colors_by_header(instance, color_filter)
 			color_filter = mapper(function(i, e) 
 				return e, true end, ipairs(Type.TABLE(color_filter)))
-			local color_map = filter(function(_, v) 
+			local color_map = filter(function(_, v) -- Filter out banned colors
 				return color_filter[v] == true end, pairs(Palette))
+			-- Sort color names for consistency between subsequent displays
 			local color_names = sorted(colors_failsafe(instance,
 				keys(pairs(color_map))), identity_fn)
 			return mapper(function(i, header)
 				return header, color_map[color_names[i]] end, ipairs(instance.headers))
 		end
 		
+		-- Constructs a header as a full divider of items
 		local function build_header(title, length, char)
 			if title == nil then return srep(char, length) end
 			title = trim(title)
@@ -992,13 +996,13 @@ local function main()
 		function proto:build(color_filter)
 			local header_colors = colors_by_header(self, Type.TABLE(color_filter))
 			local block_width = self.longest
-			local block = { }
-			for _, header in ipairs(self.header) do
-				local lines = self.lines_by_header[header]
-				header = header_colors[header](header)
-				insert(block, build_header(header, block_width, "~"))
-			end
-			return concat(block, "\n")
+			local blocks = mapper(function(i, header)
+				local lines = concat(self.lines_by_header[header], "\n")
+				header = header_colors[header](header) -- Color code headers
+				header = build_header(header, block_width, "~")
+				return format("%s\n%s", header, lines)
+			end, ipairs(self.header))
+			return concat(blocks, "\n")
 		end
 		
 		-- @param [string] texture Texture to be converted into an in-line string
@@ -1017,9 +1021,15 @@ local function main()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preference:get()
 			local items = prefs:filter_items()
-			if is_empty(items) then 
-				Log.trace("There are no items") return end -- User has no items to display
 			local quantities = prefs.quantity_by_item
+			
+			Log.trace(format("There are %d items.", #items))
+			local categories = mapper(function(_, item)
+				return item:category(), true end, ipairs(items))
+
+			for k, v in pairs(categories) do
+				Log.trace(format("%s | %s", tostring(k), tostring(v)))
+			end
 
 			local block = Text:new()
 		else Log.debug("Item database is NOT ready.") end
