@@ -149,10 +149,9 @@ local function main()
 	local function table_fn() return { } end
 	local function true_fn() return true end
 	local function nil_fn() return end
+	local function identity_fn(...) return ... end
 	local function is_empty(t) return next(Type.TABLE(t)) == nil end
-
-	local function trim(s) 
-		Type.STRING(s):match("^%s*(.-)%s*$") end
+	local function trim(s) return Type.STRING(s):match("^%s*(.-)%s*$") end
 
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
@@ -173,7 +172,7 @@ local function main()
 	-- @param [...] return values from ipairs or pairs
 	-- @param [function] callback: [boolean] function(key, value)
 	-- @return [table] filtered table values
-	local function filter(iter, state, key, callback)
+	local function filter(callback, iter, state, key)
 		Type.FUNCTION(callback)
 		local t = { }
 		for k, v in iter, state, key do
@@ -182,10 +181,10 @@ local function main()
 		return t
 	end
 
-	-- @param [...] return values from ipairs or pairs
 	-- @param [function] callback: [k, v] function(key, value)
+	-- @param [...] return values from ipairs or pairs
 	-- @return [table] mapped table values
-	local function mapper(iter, state, key, callback)
+	local function mapper(callback, iter, state, key)
 		Type.FUNCTION(callback)
 		local t = { }
 		for k, v in iter, state, key do
@@ -194,10 +193,10 @@ local function main()
 		return t
 	end
 
-	-- @param [...] return values from ipairs or pairs
 	-- @param [function] callback: [?] function(key, value)
+	-- @param [...] return values from ipairs or pairs
 	-- @return [table] Map[group, Map[key, value]]
-	local function grouper(iter, state, key, callback)
+	local function grouper(callback, iter, state, key)
 		Type.FUNCTION(callback)
 		local groups = default_table(table_fn)
 		for k, v in iter, state, key do
@@ -206,6 +205,33 @@ local function main()
 				groups[grp][k] = v end
 		end
 		return setmetatable(groups)
+	end
+
+	-- @param [...] return keys from ipairs or pairs
+	-- @return [table] List[k] from ipairs or pairs
+	local function keys(iter, state, key)
+		local t = { }
+		for k in iter, state, key do insert(t, k) end
+		return t
+	end
+
+	-- @param [...] return values from ipairs or pairs
+	-- @return [table] List[v] from ipairs or pairs
+	local function values(iter, state, key)
+		local t = { }
+		for _, v in iter, state, key do insert(t, v) end
+		return t
+	end
+
+	-- @param [table] tbl Table to be sorted and returned
+	-- @param [function] callback [?] function(e)
+	--		where e is an element and return is value to compare
+	-- @return [table] Identity
+	local function sorted(tbl, callback)
+		Type.FUNCTION(callback)
+		sort(Type.TABLE(tbl), function(a, b)
+			return callback(a) < callback(b) end)
+		return tbl
 	end
 	
 	-- Allows iteration over a table without exposing the underlying table
@@ -456,8 +482,7 @@ local function main()
 				--by_name[lower((GetItemInfo(item.item_id)))] = item 
 			end
 			for _, items in pairs(by_category) do
-				sort(items, function(k, v)
-					return (GetItemInfo(k.item_id)) < (GetItemInfo(v.item_id)) end) end
+				sorted(items, function(e) return e.item_id end) end
 		end
 		
 		-- @return [boolean] True if the database has all items cached
@@ -881,13 +906,11 @@ local function main()
 		
 		-- @return [table] List of items which the user wants to display
 		function proto:filter_items()
-			local items = { }
 			local rules = self.rules
-			for item in pairs(self.quantity_by_item) do
-				if Rule.all_passing(rules, item) then
-					insert(items, item) end end -- Item is allowed by user
-			sort(items, function(a, b) return a:info() < b:info() end)
-			return items
+			local allowed_items = filter(function(item) 
+				return Rule.all_passing(rules, item) end, pairs(self.quantity_by_item))
+			return sorted(keys(pairs(allowed_items)),
+				function(e) return e:get_info() end)
 		end
 		
 		return Preference
@@ -910,8 +933,7 @@ local function main()
 		
 		local function line_helper(tbl, str, length, dx, target)
 			Type.STRING(str)
-			if length == nil then
-				length = #str
+			if length == nil then length = #str
 			else Type.NUMBER(length) end
 			tbl.longest = max(tbl.longest, length + dx)
 			insert(target, str)
@@ -933,24 +955,23 @@ local function main()
 			line_helper(self, line, length, 0, self.lines_by_header[self.current])
 			return self
 		end
+
+		local function colors_failsafe(instance, color_names)
+			for i = 1, #instance.headers - #color_names do
+				insert(color_names, select(2, next(color_names))) end
+			return color_names
+		end
 		
-		-- TODO: flagged for refactoring
-		-- Assigns a unique color to each header, with filter support
+		-- Returns Map[header, Color], while filtering out colors
 		local function colors_by_header(instance, color_filter)
-			local filter = mapper(color_filter, function(_, c) return c, true end) -- Set
-			local color_keys = { }
-			for k, v in pairs(Palette) do
-				if filter[v] == nil then -- Color is allowed
-					insert(color_keys, k) end end
-			local num_headers = #instance.headers
-			-- Possible not enough colors left, failsafe protection
-			for i = 1, num_headers - #color_keys do
-				insert(color_keys, (next(Palette))) end
-			sort(color_keys) -- Sorted colors gives output a more predictable look
-			local color_map = { }
-			for i = 1, num_headers do
-				color_map[instance.headers[i]] = Palette[color_keys[i]] end
-			return color_map
+			color_filter = mapper(function(i, e) 
+				return e, true end, ipairs(Type.TABLE(color_filter)))
+			local color_map = filter(function(_, v) 
+				return color_filter[v] == true end, pairs(Palette))
+			local color_names = sorted(colors_failsafe(instance,
+				keys(pairs(color_map))), identity_fn)
+			return mapper(function(i, header)
+				return header, color_map[color_names[i]] end, ipairs(instance.headers))
 		end
 		
 		local function build_header(title, length, char)
@@ -981,10 +1002,9 @@ local function main()
 		end
 		
 		-- @param [string] texture Texture to be converted into an in-line string
-		-- @param [number] width Width of the icon in the in-line string
-		function Text.inline_icon(texture, width)
-			return format("|T%s:%d:%d|t", Type.STRING(texture), Type.NUMBER(width), width)
-		end
+		-- @param [number] size Size of the icon in the in-line string
+		function Text.inline_icon(texture, size)
+			return format("|T%s:%d:%d|t", Type.STRING(texture), Type.NUMBER(size), size) end
 		
 		return Text
 	end)()
@@ -997,11 +1017,12 @@ local function main()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preference:get()
 			local items = prefs:filter_items()
-			--if is_empty(items) then return end -- User has no items to display
-			
+			if is_empty(items) then 
+				Log.trace("There are no items") return end -- User has no items to display
+			local quantities = prefs.quantity_by_item
+
 			local block = Text:new()
-			print("Testing Run.")
-		end
+		else Log.debug("Item database is NOT ready.") end
 	end
 	
 	local function handle_fcm_hide()
