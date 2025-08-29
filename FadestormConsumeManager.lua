@@ -47,9 +47,8 @@ local function main()
 	local AURA_NAME = "Fadestorm Consumable Manager"
 
 	local function type_mismatch(expected, actual)
-		error(Log.error(format(
-			"Type Mismatch | Expected=%s, Actual=%s", expected, actual)))
-	end
+		Log.error(format("Type Mismatch | Expected=%s, Actual=%s", 
+			expected, actual)) end
 
 	local function type_check_strict(expected, value)
 		local actual = type(value)
@@ -381,6 +380,68 @@ local function main()
 		--MAROON = Color.new(128, 0, 0),
 		--OLIVE = Color.new(128, 128, 0),
 	}
+
+	----------------------------------------------------------------------
+    ------------------------------- STREAM -------------------------------
+    ----------------------------------------------------------------------
+
+	local Stream = (function()
+		local Stream, proto, new, mt = Class()
+
+		-- @param [function] Iteration function, e.g. 'pairs', 'ipairs', etc
+		-- @param (Optional) [?] state Table or variable passed into the iter
+		-- @return [table] Stream instance
+		function Stream:new(iter, state)
+			return new({
+				iter = Type.FUNCTION(iter),
+				state = state,
+				operations = { },
+				callbacks = { }
+			})
+		end
+
+		local function __filter(k, v, callback)
+			if callback(k, v) == true then
+				return k, v end end
+		
+		-- Allows insert to be called generically using f(t, k, v)
+		local function append(t, _, value) insert(t, value) end
+
+		-- Morphs & collects a k,v pair through all the operations, or abandons 
+		local function attempt_apply_ops(t, k, v, ops, cbs, put)
+			for i, op in ipairs(ops) do
+				k, v = op(k, v, cbs[i])
+				-- Map can turn k to nil, abandon adding
+				if k == nil then return end
+			end
+			put(t, k, v)
+		end
+
+		-- Put is either 'rawset' for dicts or 'append' for lists
+		local function collector(instance, put)
+			local t = { }
+			local cbs = instance.callbacks
+			local ops = instance.operations
+			for k, v in instance.iter(instance.state) do
+				attempt_apply_ops(t, k, v, ops, cbs, put) end
+		end
+
+		-- Filters out elements unless their callback returns true
+		-- @param [function] callback | [boolean] function(k, v)
+		function proto:filter(callback)
+			insert(self.operations, __filter)
+			insert(self.callbacks, Type.FUNCTION(callback))
+			return self
+		end
+		
+		-- @return [table] List of all collected stream elements
+		function proto:list() return collector(self, append) end
+
+		-- @return [table] Dict of all collected stream elements
+		function proto:dict() return collector(self, rawset) end
+
+		return Stream
+	end)()
 	
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
@@ -1024,13 +1085,39 @@ local function main()
 			local quantities = prefs.quantity_by_item
 			
 			Log.trace(format("There are %d items.", #items))
-			local categories = mapper(function(_, item)
-				return item:category(), true end, ipairs(items))
 
-			for k, v in pairs(categories) do
-				Log.trace(format("%s | %s", tostring(k), tostring(v)))
+			local category_set = mapper(function(_, item)
+				return item:category(), true end, ipairs(items))
+			local categories = filter(function(_, e)
+				return category_set[e] == true end, Item.categories())
+
+			Log.trace("Testing Streams...")
+
+			local data = {
+				apples = 5,
+				pears = 8,
+				bananas = 3,
+				oranges = 9,
+				grapes = 2
+			}
+
+			local st = Stream:new(pairs, data)
+			st:filter(function(k, v) return v % 2 == 0 end)
+			Type.FUNCTION(st.dict)
+			local out = st:dict()
+
+			for k, v in pairs(Type.TABLE(out)) do
+				Log.trace(format("k=%s, v=%s", tostring(k), tostring(v)))
 			end
 
+
+
+
+
+
+
+			Log.trace("Testing Streams...done.")
+			
 			local block = Text:new()
 		else Log.debug("Item database is NOT ready.") end
 	end
