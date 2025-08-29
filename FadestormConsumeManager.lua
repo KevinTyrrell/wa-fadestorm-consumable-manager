@@ -36,7 +36,7 @@ local function main()
 	local item_cached, cache_item = C_Item.IsItemDataCachedByID, C_Item.RequestLoadItemDataByID
 		local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
 	local max, min, floor = math.max, math.min, math.floor
-	local sort, insert, concat = table.sort, table.insert, table.concat
+	local sort, insert, concat, remove = table.sort, table.insert, table.concat, table.remove
 
 	local Palette, Log -- Forward declaration
 	
@@ -400,19 +400,33 @@ local function main()
 			})
 		end
 
-		local function __filter(k, v, callback)
-			if callback(k, v) == true then
+		--[[ Internal Stream Functions ]]--
+
+		local function filter(k, v, callback)
+			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
+
+		local function map(k, v, callback)
+			k, v = callback(k, v)
+			return k, v
+		end
+
+		local function peek(k, v, callback)
+			callback(k, v)
+			return k, v
+		end
 		
 		-- Allows insert to be called generically using f(t, k, v)
 		local function append(t, _, value) insert(t, value) end
+		local function flip_mapping(k, v) return v, k end
+		local function set_mapping(k) return k, true end
 
 		-- Morphs & collects a k,v pair through all the operations, or abandons 
 		local function attempt_apply_ops(t, k, v, ops, cbs, put)
 			for i, op in ipairs(ops) do
 				k, v = op(k, v, cbs[i])
-				-- Map can turn k to nil, abandon adding
-				if k == nil then return end
+				-- Map can turn k, v to nil, neither is valid
+				if k == nil or v == nil then return end
 			end
 			put(t, k, v)
 		end
@@ -424,21 +438,51 @@ local function main()
 			local ops = instance.operations
 			for k, v in instance.iter(instance.state) do
 				attempt_apply_ops(t, k, v, ops, cbs, put) end
+			return t
 		end
 
-		-- Filters out elements unless their callback returns true
+		local function inject_mapping(instance, mapper, put)
+			insert(instance.operations, map)
+			insert(instance.callbacks, mapper)
+			local t = collector(instance, put)
+			remove(instance.operations)
+			remove(instance.callbacks)
+			return t
+		end
+
+		local function make_api_operation(op)
+			Type.FUNCTION(op)
+			return function(instance, callback)
+				insert(instance.operations, op)
+				insert(instance.callbacks, Type.FUNCTION(callback))
+				return instance
+			end
+		end
+
+		--[[ Accessing Stream Functions ]]--
+
+		proto.peek = make_api_operation(peek)
+
+		--[[ Mutating Stream Functions ]]--
+
+		-- Filters out mappings unless their callback returns true
 		-- @param [function] callback | [boolean] function(k, v)
-		function proto:filter(callback)
-			insert(self.operations, __filter)
-			insert(self.callbacks, Type.FUNCTION(callback))
-			return self
-		end
-		
-		-- @return [table] List of all collected stream elements
-		function proto:list() return collector(self, append) end
+		proto.filter = make_api_operation(filter)
 
-		-- @return [table] Dict of all collected stream elements
+		-- Mutates mappings into new pairs returned by the callback
+		-- @param [function] callback | [?, ?] function(k, v)
+		proto.map = make_api_operation(map)
+
+		--[[ Collect Stream Functions ]]--
+		
+		-- @return [table] List of all collected stream values
+		function proto:list() return collector(self, append) end
+		-- @return [table] Dict of all collected stream pairs
 		function proto:dict() return collector(self, rawset) end
+		-- @return [table] List of all keys in the stream
+		function proto:keys() return inject_mapping(self, flip_mapping, append) end
+		-- @return [table] Map[key, true] Set of all keys in the stream
+		function proto:set() return inject_mapping(self, set_mapping, rawset) end
 
 		return Stream
 	end)()
@@ -1096,18 +1140,20 @@ local function main()
 			local data = {
 				apples = 5,
 				pears = 8,
+				guava = 1,
 				bananas = 3,
 				oranges = 9,
+				mango = 4,
 				grapes = 2
 			}
 
-			local st = Stream:new(pairs, data)
-			st:filter(function(k, v) return v % 2 == 0 end)
-			Type.FUNCTION(st.dict)
-			local out = st:dict()
+			local out = Stream:new(pairs, data)
+				:map(function(k, v) return k, #k end)
+				:filter(function(k, v) return v % 2 == 0 end)
+				:keys()
 
-			for k, v in pairs(Type.TABLE(out)) do
-				Log.trace(format("k=%s, v=%s", tostring(k), tostring(v)))
+			for i, e in ipairs(Type.TABLE(out)) do
+				Log.trace(format("e=%s", tostring(e)))
 			end
 
 
