@@ -407,6 +407,16 @@ local function main()
 		local function filter(k, v, callback)
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
+		local function unique() -- This function requires to be constructed first
+			local distinct = setmetatable({ }, { __mode = "k" }) -- Weak Table
+			return function(k, v, callback)
+				local key = callback(k, v)
+				if distinct[key] == nil then
+					distinct[key] = true -- Mark that we've seen this mapping
+					return k, v
+				end
+			end
+		end
 		
 		-- Allows insert to be called generically using f(t, k, v)
 		local function append(t, _, value) insert(t, value) end
@@ -479,6 +489,10 @@ local function main()
 		-- Mutates mappings into new pairs returned by the callback
 		-- @param [function] callback | [?, ?] function(k, v)
 		proto.map = make_api_operation(map)
+
+		-- Ensures all unique elements, element choice chosen by callback
+		-- @param [function] callback | [?] function(k, v)
+		proto.unique = make_api_operation(unique())
 
 		--[[ Collect Stream Functions ]]--
 		
@@ -1135,14 +1149,14 @@ local function main()
 			local items = prefs:filter_items()
 			local quantities = prefs.quantity_by_item
 			
-			Log.trace(format("There are %d items.", #items))
+			Log.debug(format("There are %d items.", #items))
 
 			local category_set = mapper(function(_, item)
 				return item:category(), true end, ipairs(items))
 			local categories = filter(function(_, e)
 				return category_set[e] == true end, Item.categories())
 
-			Log.trace("Testing Streams...")
+			Log.debug("Testing Streams...")
 
 			local data = {
 				apples = 5,
@@ -1156,14 +1170,14 @@ local function main()
 
 			local out = Stream:new(pairs, data)
 				:map(function(k, v) return k, #k end)
-				:filter(function(k, v) return v % 2 == 0 end)
-				:keys()
+				:unique(function(k, v) return k end)
+				:dict()
 
-			for i, e in ipairs(Type.TABLE(out)) do
-				Log.trace(format("e=%s", tostring(e)))
+			for k, v in pairs(Type.TABLE(out)) do
+				Log.debug(format("k=%s, v=%s", tostring(k), tostring(v)))
 			end
 
-			Log.trace("Testing Streams...done.")
+			Log.debug("Testing Streams...done.")
 			
 			local block = Text:new()
 		else Log.debug("Item database is NOT ready.") end
