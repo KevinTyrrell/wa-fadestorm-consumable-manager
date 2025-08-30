@@ -402,27 +402,16 @@ local function main()
 
 		--[[ Internal Stream Functions ]]--
 
+		local function map(k, v, callback) k, v = callback(k, v); return k, v end
+		local function peek(k, v, callback) callback(k, v); return k, v end
 		local function filter(k, v, callback)
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
-
-		local function map(k, v, callback) k, v = callback(k, v); return k, v end
-		local function peek(k, v, callback) callback(k, v); return k, v end
 		
 		-- Allows insert to be called generically using f(t, k, v)
 		local function append(t, _, value) insert(t, value) end
 		local function flip_mapping(k, v) return v, k end
 		local function set_mapping(k) return k, true end
-
-		-- Put is either 'rawset' for dicts or 'append' for lists
-		local function collector(instance, put)
-			local t = { }
-			local cbs = instance.callbacks
-			local ops = instance.operations
-			for k, v in instance.iter(instance.state) do
-				attempt_apply_ops(t, k, v, ops, cbs, put) end
-			return t
-		end
 
 		-- Executes all operations on a pairing, short-circuiting if nil
 		local function try_pair_ops(k, v, ops, cbs)
@@ -432,6 +421,7 @@ local function main()
 			return k, v
 		end
 
+		-- Returns an iterator that performs all operations and callbacks
 		local function iterator(instance)
 			local iter, state, last_key = instance.iter(instance.state)
 			Type.FUNCTION(iter) -- Mandatory
@@ -440,10 +430,17 @@ local function main()
 				repeat last_key, v = iter(state, last_key) -- Move source
 					if last_key == nil or v == nil then return end -- iter empty
 					k, v = try_pair_ops(last_key, v, ops, cbs)
-					if k ~= nil and v ~= nil then
-						return k, v end
-				until true
+					if k ~= nil and v ~= nil then return k, v end
+				until false
 			end
+		end
+
+		-- Put is either 'rawset' for dicts or 'append' for lists
+		local function collector(instance, put)
+			local t = { }
+			for k, v in iterator(instance) do
+				put(t, k, v) end
+			return t
 		end
 
 		local function inject_mapping(instance, mapper, put)
@@ -466,9 +463,12 @@ local function main()
 
 		--[[ Accessing Stream Functions ]]--
 
+		-- Allows inspection of mappings during the stream
+		-- @param [function] callback | function(k, v)
 		proto.peek = make_api_operation(peek)
 
-		mt.__call = iterator
+		-- @return [function] iterator | [k, v] function()
+		mt.__call = iterator -- Call instance for iterator
 
 		--[[ Mutating Stream Functions ]]--
 
@@ -1162,12 +1162,6 @@ local function main()
 			for i, e in ipairs(Type.TABLE(out)) do
 				Log.trace(format("e=%s", tostring(e)))
 			end
-
-
-
-
-
-
 
 			Log.trace("Testing Streams...done.")
 			
