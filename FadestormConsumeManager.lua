@@ -404,9 +404,11 @@ local function main()
 
 		local function map(k, v, callback) k, v = callback(k, v); return k, v end
 		local function peek(k, v, callback) callback(k, v); return k, v end
+
 		local function filter(k, v, callback)
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
+
 		local function unique() -- This function requires to be constructed first
 			local distinct = setmetatable({ }, { __mode = "k" }) -- Weak Table
 			return function(k, v, callback)
@@ -475,6 +477,7 @@ local function main()
 
 		-- Allows inspection of mappings during the stream
 		-- @param [function] callback | function(k, v)
+		-- @return [table] Instance
 		proto.peek = make_api_operation(peek)
 
 		-- @return [function] iterator | [k, v] function()
@@ -484,15 +487,27 @@ local function main()
 
 		-- Filters out mappings unless their callback returns true
 		-- @param [function] callback | [boolean] function(k, v)
+		-- @return [table] Instance
 		proto.filter = make_api_operation(filter)
 
 		-- Mutates mappings into new pairs returned by the callback
 		-- @param [function] callback | [?, ?] function(k, v)
+		-- @return [table] Instance
 		proto.map = make_api_operation(map)
 
-		-- Ensures all unique elements, element choice chosen by callback
+		-- Guarantees uniqueness of elements based on callback-defined identity
 		-- @param [function] callback | [?] function(k, v)
+		-- @return [table] Instance
 		proto.unique = make_api_operation(unique())
+
+		-- Sorts the values in the stream using a custom comparator
+		-- @param [function] callback | [boolean] function(a, b)
+		-- @return [table] Instance
+		function proto:sorted(callback)
+			local values = instance:list()
+			sort(values, Type.FUNCTION(callback))
+			return Stream:new(values) -- Return brand-new stream
+		end
 
 		--[[ Collect Stream Functions ]]--
 		
@@ -1168,12 +1183,13 @@ local function main()
 				grapes = 2
 			}
 
-			local out = Stream:new(pairs, data)
-				:map(function(k, v) return k, #k end)
-				:unique(function(k, v) return k end)
-				:dict()
+			data = Stream:new(data)
+				:keys()
+			data = Stream:new(data)
+				:sorted(function(a, b) return a < b end)
+				:list()
 
-			for k, v in pairs(Type.TABLE(out)) do
+			for k, v in ipairs(Type.TABLE(data)) do
 				Log.debug(format("k=%s, v=%s", tostring(k), tostring(v)))
 			end
 
