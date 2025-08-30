@@ -406,30 +406,13 @@ local function main()
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
 
-		local function map(k, v, callback)
-			k, v = callback(k, v)
-			return k, v
-		end
-
-		local function peek(k, v, callback)
-			callback(k, v)
-			return k, v
-		end
+		local function map(k, v, callback) k, v = callback(k, v); return k, v end
+		local function peek(k, v, callback) callback(k, v); return k, v end
 		
 		-- Allows insert to be called generically using f(t, k, v)
 		local function append(t, _, value) insert(t, value) end
 		local function flip_mapping(k, v) return v, k end
 		local function set_mapping(k) return k, true end
-
-		-- Morphs & collects a k,v pair through all the operations, or abandons 
-		local function attempt_apply_ops(t, k, v, ops, cbs, put)
-			for i, op in ipairs(ops) do
-				k, v = op(k, v, cbs[i])
-				-- Map can turn k, v to nil, neither is valid
-				if k == nil or v == nil then return end
-			end
-			put(t, k, v)
-		end
 
 		-- Put is either 'rawset' for dicts or 'append' for lists
 		local function collector(instance, put)
@@ -439,6 +422,28 @@ local function main()
 			for k, v in instance.iter(instance.state) do
 				attempt_apply_ops(t, k, v, ops, cbs, put) end
 			return t
+		end
+
+		-- Executes all operations on a pairing, short-circuiting if nil
+		local function try_pair_ops(k, v, ops, cbs)
+			for i, op in ipairs(ops) do
+				k, v = op(k, v, cbs[i])
+				if k == nil or v == nil then return end end
+			return k, v
+		end
+
+		local function iterator(instance)
+			local iter, state, last_key = instance.iter(instance.state)
+			Type.FUNCTION(iter) -- Mandatory
+			local ops, cbs, k, v = instance.operations, instance.callbacks
+			return function()
+				repeat last_key, v = iter(state, last_key) -- Move source
+					if last_key == nil or v == nil then return end -- iter empty
+					k, v = try_pair_ops(last_key, v, ops, cbs)
+					if k ~= nil and v ~= nil then
+						return k, v end
+				until true
+			end
 		end
 
 		local function inject_mapping(instance, mapper, put)
@@ -462,6 +467,8 @@ local function main()
 		--[[ Accessing Stream Functions ]]--
 
 		proto.peek = make_api_operation(peek)
+
+		mt.__call = iterator
 
 		--[[ Mutating Stream Functions ]]--
 
