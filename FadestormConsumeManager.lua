@@ -506,7 +506,7 @@ local function main()
 		function proto:sorted(callback)
 			local values = instance:list()
 			sort(values, Type.FUNCTION(callback))
-			return Stream:new(values) -- Return brand-new stream
+			return Stream:new(ipairs, values) -- Return brand-new stream
 		end
 
 		--[[ Collect Stream Functions ]]--
@@ -1183,9 +1183,9 @@ local function main()
 				grapes = 2
 			}
 
-			data = Stream:new(data)
+			data = Stream:new(pairs, data)
 				:keys()
-			data = Stream:new(data)
+			data = Stream:new(ipairs, data)
 				:sorted(function(a, b) return a < b end)
 				:list()
 
