@@ -167,79 +167,6 @@ local function main()
 			end
 		end)
 	end
-
-	-- @param [...] return values from ipairs or pairs
-	-- @param [function] callback: [boolean] function(key, value)
-	-- @return [table] filtered table values
-	local function filter(callback, iter, state, key)
-		Type.FUNCTION(callback)
-		local t = { }
-		for k, v in iter, state, key do
-			if callback(k, v) == true then
-				t[k] = v end end
-		return t
-	end
-
-	-- @param [function] callback: [k, v] function(key, value)
-	-- @param [...] return values from ipairs or pairs
-	-- @return [table] mapped table values
-	local function mapper(callback, iter, state, key)
-		Type.FUNCTION(callback)
-		local t = { }
-		for k, v in iter, state, key do
-			local a, b = callback(k, v)
-			if a ~= nil then t[a] = b end end
-		return t
-	end
-
-	-- @param [function] callback: [?] function(key, value)
-	-- @param [...] return values from ipairs or pairs
-	-- @return [table] Map[group, Map[key, value]]
-	local function grouper(callback, iter, state, key)
-		Type.FUNCTION(callback)
-		local groups = default_table(table_fn)
-		for k, v in iter, state, key do
-			local grp = callback(k, v)
-			if grp ~= nil then -- Skip groups that evaluate to nil
-				groups[grp][k] = v end
-		end
-		return setmetatable(groups)
-	end
-
-	-- @param [...] return keys from ipairs or pairs
-	-- @return [table] List[k] from ipairs or pairs
-	local function keys(iter, state, key)
-		local t = { }
-		for k in iter, state, key do insert(t, k) end
-		return t
-	end
-
-	-- @param [...] return values from ipairs or pairs
-	-- @return [table] List[v] from ipairs or pairs
-	local function values(iter, state, key)
-		local t = { }
-		for _, v in iter, state, key do insert(t, v) end
-		return t
-	end
-
-	-- @param [table] tbl Table to be sorted and returned
-	-- @param [function] callback [?] function(e)
-	--		where e is an element and return is value to compare
-	-- @return [table] Identity
-	local function sorted(tbl, callback)
-		Type.FUNCTION(callback)
-		sort(Type.TABLE(tbl), function(a, b)
-			return callback(a) < callback(b) end)
-		return tbl
-	end
-	
-	-- Allows iteration over a table without exposing the underlying table
-	local function iter(iter, state, key)
-		if state == nil then return nil_fn end
-		local function iterator(_, k)
-			return iter(state, k) end
-		return iterator, nil, key
-	end
 	
 	local function sum(t)
 		local s = 0
@@ -409,7 +336,7 @@ local function main()
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
 
-		local function unique() -- This function requires to be constructed first
+		local function unique_factory()
 			local distinct = setmetatable({ }, { __mode = "k" }) -- Weak Table
 			return function(k, v, callback)
 				local key = callback(k, v)
@@ -420,10 +347,23 @@ local function main()
 			end
 		end
 		
-		-- Allows insert to be called generically using f(t, k, v)
-		local function append(t, _, value) insert(t, value) end
-		local function flip_mapping(k, v) return v, k end
-		local function set_mapping(k) return k, true end
+		--[[ Prebuilt Callback Functions ]]--
+
+		local Mapping = (function()
+			local function stateful(factory) return factory end
+			local function stateless(func) 
+				return function() return func end end
+			local mappings = {
+				invert = stateless(function(k, v) return v, k end),
+				set = stateless(function(k) return k, true end),
+				keys = stateful(function() local i = 0
+					return function(k, v) i = i + 1; return i, k end end),
+				values = stateful(function() local i = 0
+					return function(k, v) i = i + 1; return i, v end end),
+			}
+			return stringify_keys_table(function(key)
+				return mappings[key]() end) -- Call the factory to return the cb
+		end)()
 
 		-- Executes all operations on a pairing, short-circuiting if nil
 		local function try_pair_ops(k, v, ops, cbs)
@@ -447,30 +387,15 @@ local function main()
 			end
 		end
 
-		-- Put is either 'rawset' for dicts or 'append' for lists
-		local function collector(instance, put)
-			local t = { }
-			for k, v in iterator(instance) do
-				put(t, k, v) end
-			return t
+		local function inject_op(instance, op, cb)
+			insert(instance.operations, op)
+			insert(instance.callbacks, cb)
+			return instance
 		end
 
-		local function inject_mapping(instance, mapper, put)
-			insert(instance.operations, map)
-			insert(instance.callbacks, mapper)
-			local t = collector(instance, put)
-			remove(instance.operations)
-			remove(instance.callbacks)
-			return t
-		end
-
-		local function make_api_operation(op)
-			Type.FUNCTION(op)
+		local function operation_factory(op)
 			return function(instance, callback)
-				insert(instance.operations, op)
-				insert(instance.callbacks, Type.FUNCTION(callback))
-				return instance
-			end
+				return inject_op(instance, op, Type.FUNCTION(callback)) end
 		end
 
 		--[[ Accessing Stream Functions ]]--
@@ -478,7 +403,7 @@ local function main()
 		-- Allows inspection of mappings during the stream
 		-- @param [function] callback | function(k, v)
 		-- @return [table] Instance
-		proto.peek = make_api_operation(peek)
+		proto.peek = operation_factory(peek)
 
 		-- @return [function] iterator | [k, v] function()
 		mt.__call = iterator -- Call instance for iterator
@@ -488,37 +413,54 @@ local function main()
 		-- Filters out mappings unless their callback returns true
 		-- @param [function] callback | [boolean] function(k, v)
 		-- @return [table] Instance
-		proto.filter = make_api_operation(filter)
+		proto.filter = operation_factory(filter)
 
 		-- Mutates mappings into new pairs returned by the callback
 		-- @param [function] callback | [?, ?] function(k, v)
 		-- @return [table] Instance
-		proto.map = make_api_operation(map)
+		proto.map = operation_factory(map)
 
 		-- Guarantees uniqueness of elements based on callback-defined identity
 		-- @param [function] callback | [?] function(k, v)
 		-- @return [table] Instance
-		proto.unique = make_api_operation(unique())
+		proto.unique = operation_factory(unique_factory())
+
+		-- Inverts mappings, swapping keys with values
+		-- @return [table] Instance
+		function proto:invert() return inject_op(self, map, Mapping.invert) end
+			
+		-- Overwrites values in the stream to `true`, forming a set
+		-- @return [table] Instance
+		function proto:set() return inject_op(self, map, Mapping.set) end
+			
+		-- Converts the stream into an indexed stream of keys
+		-- @return [table] Instance
+		function proto:keys() return inject_op(self, map, Mapping.keys) end
+			
+		-- Converts the stream into an indexed stream of values
+		-- @return [table] Instance
+		function proto:values() return inject_op(self, map, Mapping.values) end
 
 		-- Sorts the values in the stream using a custom comparator
 		-- @param [function] callback | [boolean] function(a, b)
 		-- @return [table] Instance
 		function proto:sorted(callback)
-			local values = instance:list()
+			local values = self:list()
 			sort(values, Type.FUNCTION(callback))
 			return Stream:new(ipairs, values) -- Return brand-new stream
 		end
 
 		--[[ Collect Stream Functions ]]--
 		
-		-- @return [table] List of all collected stream values
-		function proto:list() return collector(self, append) end
-		-- @return [table] Dict of all collected stream pairs
-		function proto:dict() return collector(self, rawset) end
-		-- @return [table] List of all keys in the stream
-		function proto:keys() return inject_mapping(self, flip_mapping, append) end
-		-- @return [table] Map[key, true] Set of all keys in the stream
-		function proto:set() return inject_mapping(self, set_mapping, rawset) end
+		-- TODO: Groupby
+
+		-- @return [table] Table of collected elements of the stream
+		function proto:collect()
+			local t = { }
+			for k, v in iterator(self) do
+				t[k] = v end
+			return t
+		end
 
 		return Stream
 	end)()
@@ -555,12 +497,13 @@ local function main()
 			else cache_item(item_id) end
 		end
 
-		function Item.categories() return iter(ipairs(categories)) end
+		-- @return [table] List of sorted category names
+		function Item.categories() return categories end
 
-		-- Retrieves an iterator of all items for the category
 		-- @param [string] category Category name
-		function Item.by_category(category)
-			return iter(ipairs(by_category[Type.STRING(category)])) end
+		-- @param [table] List of sorted items for the category, sorted by name
+		function Item.by_category(category) 
+			return by_category[Type.STRING(category)]
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
@@ -615,17 +558,13 @@ local function main()
 
 		-- Collects names of all items in the database and alphabetizes items
 		local function process_database()
-			--[[for item in pairs(by_category) do
-				by_name[lower((GetItemInfo(item.item_id)))] = item end]]--
-			for _, item in pairs(by_id) do
-				local name = (GetItemInfo(item.item_id))
-				name = lower(name)
-				by_name[name] = item
-				
-				--by_name[lower((GetItemInfo(item.item_id)))] = item 
-			end
+			
+			-- TODO: marked for refactoring
+			by_name = Stream:new(pairs, by_id)
+				:map(function(k, v) return lower((GetItemInfo(k))), v end)
+				:dict()
 			for _, items in pairs(by_category) do
-				sorted(items, function(e) return e.item_id end) end
+				sort(items, function(a, b) return a:get_info() < b:get_info() end)
 		end
 		
 		-- @return [boolean] True if the database has all items cached
@@ -824,13 +763,16 @@ local function main()
 					Item:new(10761), -- Coldrage Dagger
 				}
 			}
+
+			-- TODO: marked for refactoring
+			categories = Stream:new(pairs, item_dump):keys()
+			sort(categories, function(k, v) return k < v end)
 			for category, items in pairs(item_dump) do
 				by_category[category] = items
 				for _, item in ipairs(items) do
 					category_by_item[item] = category end
 				insert(categories, category)
 			end
-			sort(categories, function(k, v) return k < v end)
 		end
 		
 		init_database()
