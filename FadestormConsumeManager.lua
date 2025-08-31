@@ -457,8 +457,7 @@ local function main()
 		-- @return [table] Table of collected elements of the stream
 		function proto:collect()
 			local t = { }
-			for k, v in iterator(self) do
-				t[k] = v end
+			for k, v in iterator(self) do t[k] = v end
 			return t
 		end
 
@@ -472,11 +471,8 @@ local function main()
 	local Item = (function()
 		local Item, proto, new, mt = Class()
 		
-		local by_category = { } -- Map[Item, SortedList[Item]]
-		local by_id = { } -- Map[item_id, Item]
-		local by_name = { } -- Map[item_name, Item]
-		local category_by_item = { } -- Map[Item, category]
-		local categories = { } -- SortedList[category]
+		local by_id, by_name, by_category = { }
+		local category_by_item, categories = { }
 		
 		-- Holds item IDs which have yet to be cached
 		local pending_by_id = { }
@@ -557,22 +553,19 @@ local function main()
 		function proto:category() return category_by_item[self] end
 
 		-- Collects names of all items in the database and alphabetizes items
-		local function process_database()
-			
-			-- TODO: marked for refactoring
+		local function process_item_names()
 			by_name = Stream:new(pairs, by_id)
 				:map(function(k, v) return lower((GetItemInfo(k))), v end)
-				:dict()
+				:collect()
 			for _, items in pairs(by_category) do
-				sort(items, function(a, b) return a:get_info() < b:get_info() end)
+				sort(items, function(a, b) a:get_info() < b:get_info() end) end
 		end
 		
 		-- @return [boolean] True if the database has all items cached
 		Item.ready = (function(strategy) -- Abusing param as a local
 			strategy = function()
-				-- All items are cached, complete database
-				if is_empty(pending_by_id) then
-					process_database()
+				if is_empty(pending_by_id) then -- Client has all item data
+					process_item_names() -- Signal item names are now accessible
 					strategy = true_fn
 					return true
 				end
@@ -585,7 +578,7 @@ local function main()
 			return function() return strategy() end
 		end)()
 
-		local function init_database()
+		local function init_database() -- If only WeakAuras allowed JSON files
 			local item_dump = {
 				["Flask"] = {
 					Item:new(13510, 17626), -- Flask of the Titans
@@ -764,15 +757,14 @@ local function main()
 				}
 			}
 
-			-- TODO: marked for refactoring
-			categories = Stream:new(pairs, item_dump):keys()
-			sort(categories, function(k, v) return k < v end)
-			for category, items in pairs(item_dump) do
-				by_category[category] = items
-				for _, item in ipairs(items) do
-					category_by_item[item] = category end
-				insert(categories, category)
-			end
+			categories = Stream:new(pairs, item_dump)
+				:peek(function(k, v) 
+					for i, e in ipairs(v) do
+						category_by_item[e] = k end end)
+				:keys()
+				:sorted(identity_fn)
+				:collect()
+			by_category = item_dump -- Already in-form
 		end
 		
 		init_database()
