@@ -355,7 +355,7 @@ local function main()
 				return function() return func end end
 			local mappings = {
 				invert = stateless(function(k, v) return v, k end),
-				set = stateless(function(k) return k, true end),
+				set = stateless(function(k, v) return v, true end),
 				keys = stateful(function() local i = 0
 					return function(k, v) i = i + 1; return i, k end end),
 				values = stateful(function() local i = 0
@@ -429,7 +429,7 @@ local function main()
 		-- @return [table] Instance
 		function proto:invert() return inject_op(self, map, Mapping.invert) end
 			
-		-- Overwrites values in the stream to `true`, forming a set
+		-- Associates values in the stream with `true`, forming a set
 		-- @return [table] Instance
 		function proto:set() return inject_op(self, map, Mapping.set) end
 			
@@ -445,7 +445,7 @@ local function main()
 		-- @param [function] callback | [boolean] function(a, b)
 		-- @return [table] Instance
 		function proto:sorted(callback)
-			local values = self:list()
+			local values = self:collect()
 			sort(values, Type.FUNCTION(callback))
 			return Stream:new(ipairs, values) -- Return brand-new stream
 		end
@@ -499,7 +499,7 @@ local function main()
 		-- @param [string] category Category name
 		-- @param [table] List of sorted items for the category, sorted by name
 		function Item.by_category(category) 
-			return by_category[Type.STRING(category)]
+			return by_category[Type.STRING(category)] end
 		
 		-- @param [number] item_id In-game ID of the item
 		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
@@ -558,7 +558,7 @@ local function main()
 				:map(function(k, v) return lower((GetItemInfo(k))), v end)
 				:collect()
 			for _, items in pairs(by_category) do
-				sort(items, function(a, b) a:get_info() < b:get_info() end) end
+				sort(items, function(a, b) return a:get_info() < b:get_info() end) end
 		end
 		
 		-- @return [boolean] True if the database has all items cached
@@ -762,7 +762,7 @@ local function main()
 					for i, e in ipairs(v) do
 						category_by_item[e] = k end end)
 				:keys()
-				:sorted(identity_fn)
+				:sorted(function(a, b) return a < b end)
 				:collect()
 			by_category = item_dump -- Already in-form
 		end
@@ -776,8 +776,7 @@ local function main()
 			local function repr() return self.color(self.code) end
 			local symbol_mt = { __call = repr, __tostring = repr }
 			return function(code, color)
-				return setmetatable({ code = code, color = color }, symbol_mt)
-			end
+				return setmetatable({ code = code, color = color }, symbol_mt) end
 		end)
 		
 		local function make_severity(status, marker)
@@ -950,11 +949,9 @@ local function main()
 			local tunnel = Tunneler(aura_env.config.options.rules)
 			for _, rule_grp in ipairs(tunnel()) do
 				if rule_grp.enable then -- Rule is active
-					local conds = { }
-					for _, pred_grp in ipairs(tunnel.predicates()) do
-						local dropdown = Predicate[pred_grp.condition]
-						insert(conds, Condition:new(dropdown, pred_grp.negate))
-					end
+					local conds = Stream:new(ipairs, tunnel.predicates())
+						:map(function(k, v) k, Condition:new(Predicate[v.condition], v.negate) end)
+						:collect()
 					insert(rules, Rule:new(conds))
 				end
 			end
@@ -984,10 +981,11 @@ local function main()
 		-- @return [table] List of items which the user wants to display
 		function proto:filter_items()
 			local rules = self.rules
-			local allowed_items = filter(function(item) 
-				return Rule.all_passing(rules, item) end, pairs(self.quantity_by_item))
-			return sorted(keys(pairs(allowed_items)),
-				function(e) return e:get_info() end)
+			return Stream:new(pairs, self.quantity_by_item)
+				:filter(function(k) return Rule.all_passing(rules, k) end)
+				:keys()
+				:sorted(function(a, b) return (a:get_info()) < (b:get_info()) end)
+				:collect()
 		end
 		
 		return Preference
@@ -1033,23 +1031,18 @@ local function main()
 			return self
 		end
 
-		local function colors_failsafe(instance, color_names)
-			for i = 1, #instance.headers - #color_names do
-				insert(color_names, select(2, next(color_names))) end
-			return color_names
-		end
-		
 		-- Returns Map[header, Color], while filtering out colors
 		local function colors_by_header(instance, color_filter)
-			color_filter = mapper(function(i, e) 
-				return e, true end, ipairs(Type.TABLE(color_filter)))
-			local color_map = filter(function(_, v) -- Filter out banned colors
-				return color_filter[v] == true end, pairs(Palette))
-			-- Sort color names for consistency between subsequent displays
-			local color_names = sorted(colors_failsafe(instance,
-				keys(pairs(color_map))), identity_fn)
-			return mapper(function(i, header)
-				return header, color_map[color_names[i]] end, ipairs(instance.headers))
+			local banned = Stream:new(ipairs, color_filter):set():collect()
+			local valid = Stream:new(pairs, Palette)
+				:filter(function(k, v) return banned[v] ~= true end)
+				:keys():collect()
+			for i = 1, #instance.headers - #valid do
+				insert(valid, next(valid)) end -- Failsafe if not enough colors
+			return Stream:new(ipairs, valid)
+				:sorted(function(a, b) return a < b end)
+				:map(function(k, v) return instance.headers[k], Palette[v] end)
+				:collect()
 		end
 		
 		-- Constructs a header as a full divider of items
@@ -1069,14 +1062,17 @@ local function main()
 		-- @param [table] color_filter List of header colors which should not be used
 		-- @return [string] Built text block
 		function proto:build(color_filter)
-			local header_colors = colors_by_header(self, Type.TABLE(color_filter))
+			color_filter = default.TABLE(color_filter, table_fn)
+			local header_colors = colors_by_header(self, color_filter)
 			local block_width = self.longest
-			local blocks = mapper(function(i, header)
-				local lines = concat(self.lines_by_header[header], "\n")
-				header = header_colors[header](header) -- Color code headers
-				header = build_header(header, block_width, "~")
-				return format("%s\n%s", header, lines)
-			end, ipairs(self.header))
+			local blocks = Stream:new(ipairs, self.headers)
+				:map(function(i, header)
+					local lines = concat(self.lines_by_header[header], "\n")
+					header = header_colors[header](header) -- Color code headers
+					header = build_header(header, block_width, "~")
+					return i, format("%s\n%s", header, lines)
+				end)
+				:collect()
 			return concat(blocks, "\n")
 		end
 		
@@ -1095,41 +1091,30 @@ local function main()
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
 			local prefs = Preference:get()
-			local items = prefs:filter_items()
+			local valid_items = prefs:filter_items()
 			local quantities = prefs.quantity_by_item
-			
-			Log.debug(format("There are %d items.", #items))
 
-			local category_set = mapper(function(_, item)
-				return item:category(), true end, ipairs(items))
-			local categories = filter(function(_, e)
-				return category_set[e] == true end, Item.categories())
-
-			Log.debug("Testing Streams...")
-
-			local data = {
-				apples = 5,
-				pears = 8,
-				guava = 1,
-				bananas = 3,
-				oranges = 9,
-				mango = 4,
-				grapes = 2
-			}
-
-			data = Stream:new(pairs, data)
-				:keys()
-			data = Stream:new(ipairs, data)
+			-- List of sorted categories and map of sorted items by category
+			local categories = Stream:new(ipairs, valid_items)
+				:map(function(k, v) return k, v:category() end)
+				:unique(function(k, v) return v end)
+				:values()
 				:sorted(function(a, b) return a < b end)
-				:list()
+				:collect()
+			local by_category = Stream:new(ipairs, categories)
+				:map(function(k, v) return v, { } end)
+				:collect()
+			for _, item in ipairs(valid_items) do
+				insert(by_category[item:category()], item) end
 
-			for k, v in ipairs(Type.TABLE(data)) do
-				Log.debug(format("k=%s, v=%s", tostring(k), tostring(v)))
-			end
-
-			Log.debug("Testing Streams...done.")
-			
 			local block = Text:new()
+
+			for _, cat in ipairs(categories) do
+				block:header(cat)
+				block:line("Would you like me to suggest names that also pair well with the rejected")
+			end
+			
+			aura_env.display = block:build()
 		else Log.debug("Item database is NOT ready.") end
 	end
 	
@@ -1160,6 +1145,8 @@ local function main()
         local handler = event_handler[event]
         if handler then return handler(...) end
     end
+
+	Item.ready() -- Get a head start on querying the server
 end
 
 main() -- Main method
