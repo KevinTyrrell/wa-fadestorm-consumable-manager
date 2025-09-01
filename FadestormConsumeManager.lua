@@ -327,7 +327,7 @@ local function main()
 			})
 		end
 
-		--[[ Internal Stream Functions ]]--
+		--[[ Stateless Stream Functions ]]--
 
 		local function map(k, v, callback) k, v = callback(k, v); return k, v end
 		local function peek(k, v, callback) callback(k, v); return k, v end
@@ -335,6 +335,8 @@ local function main()
 		local function filter(k, v, callback)
 			if Type.BOOLEAN(callback(k, v)) == true then
 				return k, v end end
+
+		--[[ Stateful Stream Functions ]]--
 
 		local function unique_factory()
 			local distinct = setmetatable({ }, { __mode = "k" }) -- Weak Table
@@ -423,7 +425,8 @@ local function main()
 		-- Guarantees uniqueness of elements based on callback-defined identity
 		-- @param [function] callback | [?] function(k, v)
 		-- @return [table] Instance
-		proto.unique = operation_factory(unique_factory())
+		function proto:unique(callback)
+			return inject_op(self, unique_factory(), Type.FUNCTION(callback)) end
 
 		-- Inverts mappings, swapping keys with values
 		-- @return [table] Instance
@@ -950,7 +953,7 @@ local function main()
 			for _, rule_grp in ipairs(tunnel()) do
 				if rule_grp.enable then -- Rule is active
 					local conds = Stream:new(ipairs, tunnel.predicates())
-						:map(function(k, v) k, Condition:new(Predicate[v.condition], v.negate) end)
+						:map(function(k, v) return k, Condition:new(Predicate[v.condition], v.negate) end)
 						:collect()
 					insert(rules, Rule:new(conds))
 				end
@@ -990,98 +993,139 @@ local function main()
 		
 		return Preference
 	end)()
+
+	-- @return [table] Sorted list of categories
+	-- @return [table] Map sorted items by category
+	local function get_relevant_items()
+		local valid_items = Preference:get():filter_items()
+		-- List of sorted categories and map of sorted items by category
+		local categories = Stream:new(ipairs, valid_items)
+			:map(function(k, v) return k, v:category() end)
+			:unique(function(k, v) return v end)
+			:values()
+			:sorted(function(a, b) return a < b end)
+			:collect()
+		local by_category = Stream:new(ipairs, categories)
+			:map(function(k, v) return v, { } end)
+			:collect()
+		for _, item in ipairs(valid_items) do
+			insert(by_category[item:category()], item) end
+		return categories, by_category
+	end
 	
     ----------------------------------------------------------------------
 	------------------------------ DISPLAY -------------------------------
     ----------------------------------------------------------------------
 	
-	local Text = (function()
-		local Text, proto, new, mt = Class()
+	local Block = (function()
+		local Block, proto, new, mt = Class()
 		
-		function Text:new()
+		function Block:new(min_width)
 			return new({
-				headers = { },
-				lines_by_header = default_table(table_fn),
-				longest = 0
+				headers = { }, -- Headers in-order
+				header_widths = { }, -- Header widths in-order
+				sections = default_table(table_fn), -- Lines in-order
+				width = 0,
+				min_width = Type.NUMBER(min_width),
 			})
 		end
-		
-		local function line_helper(tbl, str, length, dx, target)
+
+		local function verify_length(instance, str, length) -- Updates block size
 			Type.STRING(str)
-			if length == nil then length = #str
-			else Type.NUMBER(length) end
-			tbl.longest = max(tbl.longest, length + dx)
-			insert(target, str)
+			if length ~= nil then
+				length = Type.NUMBER(length)
+			else length = #str end
+			instance.width = max(length, instance.width)
+			return str, length
 		end
 		
-		-- @param [string] title Centered text of this header
-		-- @param (optional) [number] length Override for the text length
+		-- @param [string] title Centered text of the header section
+		-- @param (optional) [number] length Text length override
 		-- @return [table] Builder instance
 		function proto:header(title, length)
-			line_helper(self, title, length, 2, self.headers)
-			self.current = title
+			title, length = verify_length(self, title, length)
+			insert(self.headers, title)
+			insert(self.header_widths, length)
 			return self
 		end
 		
-		-- @param [string] line Text which is housed under the header
-		-- @param (optional) [number] length Override for the text length
+		-- @param [string] line Text to be appended under the current header
+		-- @param (optional) [number] length Text length override
 		-- @return [table] Builder instance
 		function proto:line(line, length)
-			line_helper(self, line, length, 0, self.lines_by_header[self.current])
+			if next(self.headers) == nil then return self end -- Safety
+			local lines = self.sections[#self.headers]
+			insert(lines, (verify_length(self, line, length)))
 			return self
 		end
 
-		-- Returns Map[header, Color], while filtering out colors
-		local function colors_by_header(instance, color_filter)
-			local banned = Stream:new(ipairs, color_filter):set():collect()
-			local valid = Stream:new(pairs, Palette)
-				:filter(function(k, v) return banned[v] ~= true end)
-				:keys():collect()
-			for i = 1, #instance.headers - #valid do
-				insert(valid, next(valid)) end -- Failsafe if not enough colors
-			return Stream:new(ipairs, valid)
+		-- Sorted list of colors, filtering out banned colors
+		local function make_palette(banned_colors)
+			banned_colors = Stream:new(ipairs, Type.TABLE(banned_colors))
+				:set():collect()
+			return Stream:new(pairs, Palette)
+				:filter(function(k, v) return banned_colors[v] ~= true end)
+				:keys() -- Filter can damage list, reform indexes
+				-- Sort by color name for more consistent color patterns
 				:sorted(function(a, b) return a < b end)
-				:map(function(k, v) return instance.headers[k], Palette[v] end)
-				:collect()
+				:map(function(k, v) return k, Palette[v] end)
+				:collect() -- Translate color strs to color objects
 		end
-		
-		-- Constructs a header as a full divider of items
-		local function build_header(title, length, char)
-			if title == nil then return srep(char, length) end
-			title = trim(title)
-			if title == "" then return srep(char, length) end
-			local t_len = #title + 2
-			local s_len = (length - t_len) / 2
-			local s_lenf = floor(s_len)
-			local section = srep(char, s_lenf)
-			if s_len == s_lenf then
-				return format("%s %s %s", section, title, section) end
-			return format("%s %s %s%s", section, title, section, char)
+
+		-- Ensures colors table corresponds to the headers table
+		local function ensure_colors(instance, colors)
+			local headers = instance.headers
+			if next(colors) == nil then insert(colors, Palette.WHITE) end
+			local num_colors = #colors
+			local shortfall = #headers - num_colors
+			for i = 1, shortfall do -- edge case: not enough colors
+				local index = (i - 1) % num_colors + 1 -- Wrap-around
+				insert(colors, colors[index])
+			end
+			return colors
 		end
-		
+
+		-- Determines the exact formatting of the divider based on available space
+		local function format_header(title, len, block_width, char)
+			if len + 1 >= block_width then return title end -- No space
+			local PART_FMT = "%s %s %s"
+			local part_len_f = (block_width - len) / 2 - 1
+			local part_len = floor(part_len_f)
+			local part = srep(char, part_len)
+			if part_len_f == part_len then
+				return format(PART_FMT, part, title, part) end
+			return format(PART_FMT, part, title, part) .. char
+		end
+
+		-- Constructs the header at the specified index
+		local function make_header(instance, title, index, char)
+			local block_width = max(instance.width, instance.min_width)
+			if trim(title) == "" then return srep(divider_char, block_width) end
+			local header_width = instance.header_widths[index]
+			return format_header(title, header_width, block_width, char)
+		end
+
 		-- @param [table] color_filter List of header colors which should not be used
 		-- @return [string] Built text block
-		function proto:build(color_filter)
-			color_filter = default.TABLE(color_filter, table_fn)
-			local header_colors = colors_by_header(self, color_filter)
-			local block_width = self.longest
-			local blocks = Stream:new(ipairs, self.headers)
-				:map(function(i, header)
-					local lines = concat(self.lines_by_header[header], "\n")
-					header = header_colors[header](header) -- Color code headers
-					header = build_header(header, block_width, "~")
-					return i, format("%s\n%s", header, lines)
+		function proto:build(char, color_filter)
+			Type.STRING(char)
+			local colors = make_palette(default.TABLE(color_filter, table_fn))
+			ensure_colors(self, colors) -- In case we filter too many colors
+			return concat(Stream:new(ipairs, self.headers)
+				:map(function(k, v) 
+					local lines = concat(self.sections[k], "\n")
+					local header = make_header(self, colors[k](v), k, char)
+					return k, format("%s\n%s", header, lines)
 				end)
-				:collect()
-			return concat(blocks, "\n")
+				:collect(), "\n")
 		end
 		
 		-- @param [string] texture Texture to be converted into an in-line string
 		-- @param [number] size Size of the icon in the in-line string
-		function Text.inline_icon(texture, size)
+		function Block.inline_icon(texture, size)
 			return format("|T%s:%d:%d|t", Type.STRING(texture), Type.NUMBER(size), size) end
 		
-		return Text
+		return Block
 	end)()
 
     ----------------------------------------------------------------------
@@ -1090,31 +1134,27 @@ local function main()
 	
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
-			local prefs = Preference:get()
-			local valid_items = prefs:filter_items()
-			local quantities = prefs.quantity_by_item
+			Log.debug("Attempting to display block")
 
-			-- List of sorted categories and map of sorted items by category
-			local categories = Stream:new(ipairs, valid_items)
-				:map(function(k, v) return k, v:category() end)
-				:unique(function(k, v) return v end)
-				:values()
-				:sorted(function(a, b) return a < b end)
-				:collect()
-			local by_category = Stream:new(ipairs, categories)
-				:map(function(k, v) return v, { } end)
-				:collect()
-			for _, item in ipairs(valid_items) do
-				insert(by_category[item:category()], item) end
+			local quantities = Preference:new().quantity_by_item
+			local categories, by_category = get_relevant_items()
+			
+			for k, v in pairs(by_category) do
+				for i, e in ipairs(v) do
+					Log.trace(tostring(e:get_info()))
+				end
+			end
 
-			local block = Text:new()
+			local block = Block:new(20)
 
 			for _, cat in ipairs(categories) do
 				block:header(cat)
-				block:line("Would you like me to suggest names that also pair well with the rejected")
+				block:line("??")
 			end
 			
-			aura_env.display = block:build()
+			aura_env.display = block:build("~", { Palette.BLACK, Palette.GRAY })
+			return true
+			--print(aura_env.display)
 		else Log.debug("Item database is NOT ready.") end
 	end
 	
