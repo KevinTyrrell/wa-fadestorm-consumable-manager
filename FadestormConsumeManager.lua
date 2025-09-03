@@ -155,6 +155,11 @@ local function main()
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
 
+	local function xor(a, b)
+		Type.BOOLEAN(b)
+		return (Type.BOOLEAN(a) and not b) or (b and not a)
+	end
+
 	-- Creates a table in which missing keys are assigned a value
 	-- @param [function] [?] function(key)
 	local function default_table(callback)
@@ -212,11 +217,13 @@ local function main()
 	local function Enum(assigner, static)
 		static = default.TABLE(static, table_fn)
 		local ordinal = 1
-		local proxy = index(function(key, value)
-			rawset(static, key, value)
-			rawset(static, ordinal, value)
-			ordinal = ordinal + 1
-		end)
+		local proxy = setmetatable({ }, {
+			__newindex = function(_, key, value)
+				rawset(static, key, value)
+				rawset(static, ordinal, value)
+				ordinal = ordinal + 1
+			end
+		})
 		Type.FUNCTION(assigner)(proxy)
 		return static
 	end
@@ -833,10 +840,15 @@ local function main()
 	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
 	]]--
 	local Predicate = (function()
+
+		-- TODO: Marked for refactoring
+		-- TODO: Class is not needed here, redesign as functions only
 		local Predicate, proto, new, mt = Class()
 		mt.__call = function(tbl, ...) return tbl.evaluate(...) end
 		mt.__tostring = function(tbl) return tbl.repr end
 		
+
+		-- TODO: Marked for refactoring
 		-- @param [string] repr String representation of the predicate
 		-- @param [function] Peforms an evaluation, [boolean] function(item)
 		-- @return [table] Predicate instance
@@ -869,14 +881,14 @@ local function main()
 	local Condition = (function()
 		local Condition, proto, new, mt = Class()
 		-- Call predicate, pass in item param, negate output if applicable
-		mt.__call = function(tbl, ...) return tbl.pred(...) ^ tbl.negate end
+		mt.__call = function(t, ...) return xor(t.pred(...), t.negate) end
 		
 		-- @param [table] pred Predicate instance
 		-- @param [boolean] negate True to negate the predicate
 		-- @return [table] Condition instance
 		function Condition:new(pred, negate)
 			return new({
-				pred = Type.TABLE(pred),
+				pred = Type.FUNCTION(pred),
 				negate = Type.BOOLEAN(negate)
 			})
 		end
@@ -925,7 +937,7 @@ local function main()
 		local function load_quantities()
 			local _, active_profile = next(profiles) -- Always loads top profile
 			if active_profile == nil then return { } end -- No profiles
-			return Stream:new(ipairs, profile.consumes)
+			return Stream:new(ipairs, active_profile.consumes)
 				:map(function(k, v)
 					local item = Item.by_name(lower(trim(v.name)))
 					if item == nil then Log.info("User Config | Unknown Item: " .. v.name) end
@@ -936,11 +948,12 @@ local function main()
 		local function load_rules()
 			return Stream:new(ipairs, options.rules)
 				:filter(function(k, v) return v.enable end)
-				:map(function(k, v) return k, Stream:new(ipairs, v.conditions)
-					:map(function(k, v)
-						local pred = Predicate[v.predicate] -- Dropdown index -> Predicate
-						return k, Condition:new(pred, v.negate)
-					end):collect()
+				:map(function(k, v)
+					return k, Stream:new(ipairs, v.conditions)
+						:map(function(k, v)
+							local pred = Predicate[v.predicate] -- Dropdown index -> Predicate
+							return k, Condition:new(pred, v.negate)
+						end):collect()
 				end)
 				:values()
 				:map(function(k, v) return k, Rule:new(v) end)
@@ -969,8 +982,8 @@ local function main()
 		-- @return [table] List of items which the user wants to display
 		function proto:filter_items()
 			local rules = self.rules
-			return Stream:new(pairs, self.quantity_by_item)
-				:filter(function(k) return Rule.all_passing(rules, k) end)
+			return Stream:new(pairs, self.quantities)
+				:filter(function(k) return not Rule.all_passing(rules, k) end)
 				:keys()
 				:sorted(function(a, b) return (a:get_info()) < (b:get_info()) end)
 				:collect()
@@ -1158,6 +1171,10 @@ local function main()
 		if Item.ready() then -- Ensure all item are cached
 			local quantities = Preference:new().quantities
 			local categories, by_category = get_relevant_items()
+			if is_empty(by_category) then
+				Log.debug("No items were found or no items passed rules.")
+				return end -- No valid items
+
 
 			local display_block = Block:new(34)
 			for _, category in ipairs(categories) do
