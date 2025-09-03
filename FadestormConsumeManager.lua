@@ -175,25 +175,6 @@ local function main()
 		return s
 	end
 	
-	--[[
-	-- Tunnels into a table, allowing descending without repetiton
-	--
-	-- __call() -- Returns the table currently being explored
-	-- __index(key) -- Returns the value for current depth, or tunnels if table
-	]]--
-	local function Tunneler(tbl)
-		local proxy = stringify_keys_table(function(key)
-			local value = tbl[key]
-			if check.TABLE(value) then
-				tbl = value
-				return proxy
-			end
-			return value
-		end)
-		getmetatable(proxy).__call = function() return tbl end
-		return proxy
-	end
-	
 	-- @param (optional) [table] static Existing static members of the class
 	-- @param (optional) [table] proto Existing instance members of the class
 	-- @return [table] Static table used for class methods/functions
@@ -548,12 +529,18 @@ local function main()
 			-- 07: itemSubType, 08: itemStackCount, 09: itemEquipLoc, 10: itemTexture, 11: sellPrice, 
 			-- 12: classID, 13: subclassID, 14: bindType, 15: expacID, 16: setID, 17: isCraftingReagent
 			]]--
-			local name, link, _, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(self.item_id)
+			local name, link, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(self.item_id)
 			return name, link, texture, bound
 		end
 
 		-- @return [string] Category in which classifies the item
 		function proto:category() return category_by_item[self] end
+
+		-- @param [number] size Size of the icon for the in-line string
+		function proto:icon(size)
+			local texture = select(3, self:get_info())
+			return format("|T%d:%d:%d|t", texture, Type.NUMBER(size), size)
+		end
 
 		-- Collects names of all items in the database and alphabetizes items
 		local function process_item_names()
@@ -928,45 +915,43 @@ local function main()
 	
 	local Preference = (function()
 		local Preference, proto, new, mt = Class()
+
+		local config = aura_env.config
+		local options, profiles = config.options, config.profiles
 		
-		local function load_low_duration()
-			return aura_env.config.options.low_duration_thresh / 100 end
-			
-		local function load_item_quantities()
-			local quantity_by_item = { }
-			local profile = select(2, next(aura_env.config.profiles))
-			if profile ~= nil then
-				for _, grp in ipairs(profile.consumes) do
-					local name = lower(trim(grp.consume_name))
-					local item = Item.by_name(name)
-					if item ~= nil then
-						quantity_by_item[item] = grp.req_quantity
-					else Log.info("User Config | Consumable DNE: " .. name) end
-				end
-			end
-			return quantity_by_item
+		local function load_low_duration() 
+			return options.low_duration_thresh / 100 end
+		
+		local function load_quantities()
+			local _, active_profile = next(profiles) -- Always loads top profile
+			if active_profile == nil then return { } end -- No profiles
+			return Stream:new(ipairs, profile.consumes)
+				:map(function(k, v)
+					local item = Item.by_name(lower(trim(v.name)))
+					if item == nil then Log.info("User Config | Unknown Item: " .. v.name) end
+					return item, v.req_quantity end)
+				:collect()
 		end
 		
 		local function load_rules()
-			local rules = { }
-			local tunnel = Tunneler(aura_env.config.options.rules)
-			for _, rule_grp in ipairs(tunnel()) do
-				if rule_grp.enable then -- Rule is active
-					local conds = Stream:new(ipairs, tunnel.predicates())
-						:map(function(k, v) return k, Condition:new(Predicate[v.condition], v.negate) end)
-						:collect()
-					insert(rules, Rule:new(conds))
-				end
-			end
-			return rules
+			return Stream:new(ipairs, options.rules)
+				:filter(function(k, v) return v.enable end)
+				:map(function(k, v) return k, Stream:new(ipairs, v.conditions)
+					:map(function(k, v)
+						local pred = Predicate[v.predicate] -- Dropdown index -> Predicate
+						return k, Condition:new(pred, v.negate)
+					end):collect()
+				end)
+				:values()
+				:map(function(k, v) return k, Rule:new(v) end)
+				:collect()
 		end
 		
-		-- low_duration_thresh: %max duration to be considered 'low duration'
 		function Preference:new()
 			return new({
+				rules = load_rules(),
+				quantities = load_quantities(),
 				low_duration = load_low_duration(),
-				quantity_by_item = load_item_quantities(),
-				rules = load_rules()
 			})
 		end
 		
@@ -1017,6 +1002,11 @@ local function main()
 	------------------------------ DISPLAY -------------------------------
     ----------------------------------------------------------------------
 	
+	local function length_override(str, length)
+		if length == nil then  return Type.STRING(str), #str end
+		return Type.STRING(str), Type.NUMBER(length)
+	end
+
 	local Block = (function()
 		local Block, proto, new, mt = Class()
 		
@@ -1031,10 +1021,7 @@ local function main()
 		end
 
 		local function verify_length(instance, str, length) -- Updates block size
-			Type.STRING(str)
-			if length ~= nil then
-				length = Type.NUMBER(length)
-			else length = #str end
+			str, length = length_override(str, length)
 			instance.width = max(length, instance.width)
 			return str, length
 		end
@@ -1120,12 +1107,47 @@ local function main()
 				:collect(), "\n")
 		end
 		
-		-- @param [string] texture Texture to be converted into an in-line string
-		-- @param [number] size Size of the icon in the in-line string
-		function Block.inline_icon(texture, size)
-			return format("|T%s:%d:%d|t", Type.STRING(texture), Type.NUMBER(size), size) end
-		
 		return Block
+	end)()
+
+	local StringBuilder = (function()
+		local StringBuilder, proto, new, mt = Class()
+
+		local function append(instance, str, length)
+			str, length = length_override(str, length)
+			insert(instance.sections, str)
+			insert(instance.lengths, length)
+		end
+
+		-- @param (Optional) [string] initial Initial string value
+		-- @param (Optiona) [number] length Override for string length
+		-- @return Instance
+		function StringBuilder:new(initial, length)
+			local obj = new({sections = { }, lengths = { }})
+			if initial ~= nil then append(obj, initial, length) end
+			return obj
+		end
+
+		-- @param [string] str String to be appended to the builder
+		-- @param (Optional) [number] length Override for string length
+		-- @return Instance
+		function proto:append(str, length) 
+			append(self, str, length); return self end
+
+		-- @return [string] Built concatenated string
+		-- @return [number] Total length of each component
+		function proto:build(delimeter)
+			local sections = self.sections
+			local length = sum(self.lengths)
+			if delimeter ~= nil then
+				local str = concat(sections, Type.STRING(delimeter))
+				-- Delimeter adds to overall length
+				return str, length + max(0, #delimeter * (#sections - 1))
+			end
+			return concat(sections), length
+		end
+
+		return StringBuilder
 	end)()
 
     ----------------------------------------------------------------------
@@ -1134,33 +1156,28 @@ local function main()
 	
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
-			Log.debug("Attempting to display block")
-
-			local quantities = Preference:new().quantity_by_item
+			local quantities = Preference:new().quantities
 			local categories, by_category = get_relevant_items()
-			
-			for k, v in pairs(by_category) do
-				for i, e in ipairs(v) do
-					Log.trace(tostring(e:get_info()))
+
+			local display_block = Block:new(34)
+			for _, category in ipairs(categories) do
+				display_block:header(category)
+				for _, item in ipairs(by_category[category]) do
+					local name, link = item:get_info()
+					local line = StringBuilder:new()
+					-- length: +2 for icon size (estimation), +2 for '[]' link brackets
+					line:append(format("%s%s", item:icon(14), link), #name + 2 + 2)
+					display_block:line(line:build(" "))
 				end
 			end
-
-			local block = Block:new(20)
-
-			for _, cat in ipairs(categories) do
-				block:header(cat)
-				block:line("??")
-			end
 			
-			aura_env.display = block:build("~", { Palette.BLACK, Palette.GRAY })
+			aura_env.display = display_block:build("~", { Palette.GRAY })
 			return true
 			--print(aura_env.display)
 		else Log.debug("Item database is NOT ready.") end
 	end
 	
-	local function handle_fcm_hide()
-		return false
-	end
+	local function handle_fcm_hide() return false end
 	
 	-- Receives cached item information
 	local function handle_item_data(item_id, success)
