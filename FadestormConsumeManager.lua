@@ -911,11 +911,12 @@ local function main()
 		
 		-- @param [table] rules List of rule instances to evaluate
 		-- @param [varargs] ... Params to be passed into each rule
-		-- @return [boolean] True if all rules are passing
-		function Rule.all_passing(rules, ...)
+		-- @return [boolean] True if any rule is passing
+		function Rule.any_passing(rules, ...)
+			-- TODO: Add short circuit stream operation for 'anyMatch'/'firstMatch'
 			for _, rule in ipairs(Type.TABLE(rules)) do
-				if rule(...) ~= true then return false end end
-			return true
+				if rule(...) == true then return true end end
+			return false
 		end
 		
 		return Rule
@@ -947,6 +948,7 @@ local function main()
 		
 		local function load_rules()
 			return Stream:new(ipairs, options.rules)
+				:peek(function(k, v) Log.trace(format("The rule is currently: %s", tostring(v.enable))) end)
 				:filter(function(k, v) return v.enable end)
 				:map(function(k, v)
 					return k, Stream:new(ipairs, v.conditions)
@@ -983,7 +985,7 @@ local function main()
 		function proto:filter_items()
 			local rules = self.rules
 			return Stream:new(pairs, self.quantities)
-				:filter(function(k) return not Rule.all_passing(rules, k) end)
+				:filter(function(k) return not Rule.any_passing(rules, k) end)
 				:keys()
 				:sorted(function(a, b) return (a:get_info()) < (b:get_info()) end)
 				:collect()
@@ -1175,6 +1177,8 @@ local function main()
 				Log.debug("No items were found or no items passed rules.")
 				return end -- No valid items
 
+			-- TODO: Problem, empty rules pass
+			-- That means that an empty rule array automatically hides the items
 
 			local display_block = Block:new(34)
 			for _, category in ipairs(categories) do
