@@ -15,6 +15,9 @@
 --    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ]]--
 
+-- TODO: Allow for item links to be pasted into custom options
+-- TOOD: Implement weapon stone checking for mainhand and offhand
+
 local function main()
     ----------------------------------------------------------------------
     ---------------------------- INITIALIZING  ---------------------------
@@ -33,8 +36,7 @@ local function main()
 	end
 	
 	-- Imports
-	local item_cached, cache_item = C_Item.IsItemDataCachedByID, C_Item.RequestLoadItemDataByID
-		local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
+	local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
 	local max, min, floor = math.max, math.min, math.floor
 	local sort, insert, concat, remove = table.sort, table.insert, table.concat, table.remove
 
@@ -566,14 +568,22 @@ local function main()
 					strategy = true_fn
 					return true
 				end
-
-				for item_id in pairs(pending_by_id) do
-					cache_item(item_id) end
 				return false
 			end
 			
 			return function() return strategy() end
 		end)()
+
+		-- Queries any remaining items from the server
+		function Item.query()
+			local ids = Stream:new(pairs, pending_by_id)
+				:map(function(k, v) return tostring(k), v end)
+				:keys()
+				:collect()
+			Log.debug(format("Uncached Items: %s", concat(ids, ", ")))
+			for item_id in ipairs(pending_by_id) do
+				cache_item(item_id) end
+		end
 
 		local function init_database() -- If only WeakAuras allowed JSON files
 			local item_dump = {
@@ -786,7 +796,7 @@ local function main()
 		}
 		
 		local function severity_by_buff(aura_id, low_duration_thresh)
-			local _, _, _, _, duration, expire_ts = WA_GetUnitBuff(PLAYER, aura_id)
+			local duration, expire_ts = select(5, WA_GetUnitBuff(PLAYER, aura_id))
 			-- Aura could not be found on the player's buffs
 			if duration == nil then return Severity.CRITICAL end
 			local remaining = expire_ts - GetTime()
@@ -803,7 +813,7 @@ local function main()
 		function Severity:of_duration(item, prefs)
 			local aura_id = Type.TABLE(item).spell_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
-			return severity_by_buff(aura_id, Type.TABLE(prefs).low_duration_thresh)
+			return severity_by_buff(aura_id, Type.TABLE(prefs).low_duration)
 		end
 		
 		-- Measures the severity of a consumable's remaining supply
@@ -813,7 +823,7 @@ local function main()
 		-- @param [table] prefs Preferences instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item, prefs)
-			local quantities = Type.TABLE(prefs).quantity_by_item
+			local quantities = Type.TABLE(prefs).quantities
 			local req_quantity = quantities[Type.TABLE(item)]
 			local bags, elsewhere = item:get_supply()
 			if bags >= req_quantity then return Severity.STABLE end
@@ -839,43 +849,22 @@ local function main()
 	[3] | ITEM_YIELDS_BUFF: Returns true if the item can apply a buff
 	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
 	]]--
-	local Predicate = (function()
-
-		-- TODO: Marked for refactoring
-		-- TODO: Class is not needed here, redesign as functions only
-		local Predicate, proto, new, mt = Class()
-		mt.__call = function(tbl, ...) return tbl.evaluate(...) end
-		mt.__tostring = function(tbl) return tbl.repr end
-		
-
-		-- TODO: Marked for refactoring
-		-- @param [string] repr String representation of the predicate
-		-- @param [function] Peforms an evaluation, [boolean] function(item)
-		-- @return [table] Predicate instance
-		function Predicate:new(repr, evaluate)
-			return new({
-				repr = Type.STRING(repr),
-				evaluate = Type.FUNCTION(evaluate)
-			})
-		end
-		
-		return Enum(function(e)
-			-- Returns true if the player is inside of a dungeon or raid
-			e.IN_DUNGEON_RAID = (function()
-				local z_types = { party = true, raid = true, scenario = true }
-				return function()
-					return z_types[(select(2, GetInstanceInfo()))] ~= nil end
-			end)()
-			-- Returns true if the player is currently in a city or inn
-			e.IN_RESTED_AREA = IsResting
-			-- Returns true if the specified item has buffing capability
-			e.ITEM_YIELDS_BUFF = function(item)
-				return Type.TABLE(item).spell_id ~= nil end
-			-- Returns true if at least one of the item is in the player's inventory
-			e.ITEM_IN_INVENTORY = function(item)
-				return GetItemCount(Type.TABLE(item).item_id) > 0 end
-		end, Predicate)
-	end)()
+	local Predicate = Enum(function(e)
+		-- Returns true if the player is inside of a dungeon or raid
+		e.IN_DUNGEON_RAID = (function()
+			local z_types = { party = true, raid = true, scenario = true }
+			return function()
+				return z_types[(select(2, GetInstanceInfo()))] ~= nil end
+		end)()
+		-- Returns true if the player is currently in a city or inn
+		e.IN_RESTED_AREA = IsResting
+		-- Returns true if the specified item has buffing capability
+		e.ITEM_YIELDS_BUFF = function(item)
+			return Type.TABLE(item).spell_id ~= nil end
+		-- Returns true if at least one of the item is in the player's inventory
+		e.ITEM_IN_INVENTORY = function(item)
+			return GetItemCount(Type.TABLE(item).item_id) > 0 end
+	end)
 	
 	-- Predicate wrapper
 	local Condition = (function()
@@ -883,7 +872,7 @@ local function main()
 		-- Call predicate, pass in item param, negate output if applicable
 		mt.__call = function(t, ...) return xor(t.pred(...), t.negate) end
 		
-		-- @param [table] pred Predicate instance
+		-- @param [function] pred Predicate callback
 		-- @param [boolean] negate True to negate the predicate
 		-- @return [table] Condition instance
 		function Condition:new(pred, negate)
@@ -899,6 +888,8 @@ local function main()
 	local Rule = (function()
 		local Rule, proto, new, mt = Class()
 		mt.__call = function(tbl, ...)
+			-- Rules cannot be true if they have no conditions
+			if is_empty(tbl.conditions) then return false end
 			for _, cond in ipairs(tbl.conditions) do
 				if cond(...) ~= true then return false end end
 			return true
@@ -948,7 +939,6 @@ local function main()
 		
 		local function load_rules()
 			return Stream:new(ipairs, options.rules)
-				:peek(function(k, v) Log.trace(format("The rule is currently: %s", tostring(v.enable))) end)
 				:filter(function(k, v) return v.enable end)
 				:map(function(k, v)
 					return k, Stream:new(ipairs, v.conditions)
@@ -1171,21 +1161,22 @@ local function main()
 	
 	local function handle_fcm_show()
 		if Item.ready() then -- Ensure all item are cached
-			local quantities = Preference:new().quantities
+			Log.debug("Loading preferences.")
+			local prefs = Preference:new()
 			local categories, by_category = get_relevant_items()
-			if is_empty(by_category) then
-				Log.debug("No items were found or no items passed rules.")
-				return end -- No valid items
-
-			-- TODO: Problem, empty rules pass
-			-- That means that an empty rule array automatically hides the items
+			Log.debug("Attempting to display.")
+			if is_empty(by_category) then return end -- No valid items
 
 			local display_block = Block:new(34)
 			for _, category in ipairs(categories) do
 				display_block:header(category)
 				for _, item in ipairs(by_category[category]) do
+					local status = Severity:of_quantity(item, prefs) -- Quantity health
+					local marker = Severity:of_duration(item, prefs) -- Buff duration health
+					local token = Severity.token(status, marker) -- Token to describe both
 					local name, link = item:get_info()
-					local line = StringBuilder:new()
+
+					local line = StringBuilder:new(token, 8) -- +6 for token, +2 for spacing
 					-- length: +2 for icon size (estimation), +2 for '[]' link brackets
 					line:append(format("%s%s", item:icon(14), link), #name + 2 + 2)
 					display_block:line(line:build(" "))
@@ -1194,15 +1185,15 @@ local function main()
 			
 			aura_env.display = display_block:build("~", { Palette.GRAY })
 			return true
-			--print(aura_env.display)
-		else Log.debug("Item database is NOT ready.") end
+		else Item.query(); Log.debug("Item db not ready.") end -- Server has to provide us all item data, retry
 	end
 	
 	local function handle_fcm_hide() return false end
 	
 	-- Receives cached item information
 	local function handle_item_data(item_id, success)
-		Item.cache(item_id)
+		Log.trace(format("handle_item_data | item_id=%s | success=%s", tostring(item_id), tostring(success)))
+		GetItemInfo(item_id)
 		if success ~= true then
 			Log.warn(format("server data failed for item ID: %d", item_id)) end
 	end
@@ -1215,7 +1206,8 @@ local function main()
     local event_handler = {
         ["FCM_SHOW"] = handle_fcm_show,
 		["FCM_HIDE"] = handle_fcm_hide,
-		["ITEM_DATA_LOAD_RESULT"] = handle_item_data,
+		["ITEM_DATA_LOAD_RESULT"] = handle_item_data, -- Inconsistent
+		["GET_ITEM_INFO_RECEIVED"] = handle_item_data,
     }
     
     -- Entry-point for triggers
@@ -1224,7 +1216,7 @@ local function main()
         if handler then return handler(...) end
     end
 
-	Item.ready() -- Get a head start on querying the server
+	Item.query() -- Begin querying all missing items from the database
 end
 
 main() -- Main method
