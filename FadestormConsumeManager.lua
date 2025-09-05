@@ -516,7 +516,9 @@ local function main()
 				instance.size = instance.size - 1
 			else instance.values[index] = value end -- Update value
 		end
-	end)
+
+		return LinkedMap
+	end)()
 	
     ----------------------------------------------------------------------
     -------------------------------- ITEM --------------------------------
@@ -599,29 +601,7 @@ local function main()
 				sort(items, function(a, b) return a:get_info() < b:get_info() end) end
 		end
 
-		local function query_item(item_id)
-			local name, link, _, _, _, _, _, _, _, 
-				texture, _, _, _, bound = GetItemInfo(Type.NUMBER(item_id))
-			if name == nil then return end
-			local item = by_id[item_id] -- Complete the item's internal data
-			item.name, item.link, item.texture, item.bound = name, link, texture, bound
-			by_name[lower(name)] = item
-			pending_by_id[item_id] = nil
-		end
 
-		-- @return [boolean] True if the database has all items cached
-		Item.ready = (function(strategy) -- Abusing param as a local
-			strategy = function()
-				-- TODO: Determine how to loop over and remove as we go.
-				if is_empty(pending_by_id) then -- Client has all item data
-					process_item_names() -- Signal item names are now accessible
-					strategy = true_fn
-					return true end
-				return false
-			end
-			
-			return function() return strategy() end
-		end)()
 
 		-- Accepts a query response and/or queries the server for item information
 		-- @param [number] item_id Item ID of the response, or to query
@@ -652,6 +632,7 @@ local function main()
 	local Database = (function()
 		local Database = { }
 
+		local pending_ids = LinkedMap:new() -- Set
 
 		local ITEM_DUMP = { -- Item ID, Aura ID
 			["Flask"] = {
@@ -830,7 +811,41 @@ local function main()
 				{ 10761 }, -- Coldrage Dagger
 			}
 		}
-	end)
+
+		local cats, auras = { }, { }
+		for category, tbl in pairs(ITEM_DUMP) do
+			for _, t in ipairs(tbl) do -- TODO: Implement flap map in stream
+				local item_id, aura_id = unpack(t)
+				pending_ids[item_id] = true
+				cats[item_id], auras[item_id] = category, aura_id
+			end 
+		end; ITEM_DUMP = nil -- Garbage collect
+
+		local function query_item(item_id)
+			local name, link, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(item_id)
+			if name == nil then return end -- GetItemInfo can return nil at any time
+			local category, aura_id = cats[item_id], auras[item_id]
+			pending_ids[item_id], cats[item_id], auras[item_id] = nil, nil, nil
+			return Item:new(item_id, name, category, link, texture, bound, aura_id)
+		end
+
+		-- @return [boolean] true if all items from the database are cached
+		Database.ready = (function(strategy)
+			strategy = function()
+				for item_id in pending_ids.stream() do 
+					query_item(item_id) end
+				if pending_ids.size <= 0 then -- All items cached
+					strategy = true_fn
+					return true end
+				return false end
+			return function() return strategy() end
+		end)()
+
+		-- @param [number] item_id Item ID to query the server
+		function Database.query(item_id) return query_item(Type.NUMBER(item_id)) end
+
+		return Database
+	end)()
 
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
