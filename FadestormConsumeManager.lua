@@ -443,7 +443,8 @@ local function main()
 		-- @return [table] Instance
 		function proto:sorted(callback)
 			local values = self:collect()
-			sort(values, Type.FUNCTION(callback))
+			if callback ~= nil then Type.FUNCTION(callback) end
+			sort(values, callback)
 			return Stream:new(ipairs, values) -- Return brand-new stream
 		end
 
@@ -527,17 +528,34 @@ local function main()
 	local Item = (function()
 		local Item, proto, new, mt = Class()
 		
-		local by_id, by_name, by_category = { }
-		local categories = { }
-		
-		-- Holds item IDs which have yet to be cached
-		local pending_by_id = { }
+		local by_id, by_name = { }, { }
+		local by_category, categories = default_table(table_fn)
 
-		-- TODO: This needs to be a linked hash map
-		-- TODO: allow for holes in the array during iteration
-		-- TODO: highly consider making a database class
-		-- TODO: Encapsulate the two lists together
+		-- @param [number] item_id In-game ID of the item
+		-- @param [string] name Name of the item
+		-- @param [string] category Category of the item (e.g. "Combat")
+		-- @param [string] link In-game hyperlink of the item
+		-- @param [number] texture Icon ID of the item
+		-- @param (optional) [boolean] true if item is bind on pickup
+		-- @param (optional) [nubmer] aura_id In-game ID of aura the item applies
+		-- @return [table] Item instance
+		function Item:new(item_id, name, category, link, texture, bound, aura_id)
+			local obj = new({
+				item_id = Type.NUMBER(item_id),
+				name = Type.STRING(name),
+				category = Type.STRING(category),
+				link = Type.STRING(link),
+				texture = Type.NUMBER(texture),
+			})
+			if bound ~= nil then obj.bound = Type.BOOLEAN(bound) end
+			if aura_id ~= nil then obj.aura_id = Type.NUMBER(aura_id) end
+			by_id[item_id], by_name[lower(name)] = obj, obj -- Reverse maps
+			insert(by_category[category], obj)
+			return obj
+		end
 		
+		--[[ Item Reverse Maps ]]--
+
 		-- @param [string] item_name Name of the item, case-insensitive
 		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_name(item_name)
@@ -552,20 +570,16 @@ local function main()
 
 		-- @param [string] category Category name
 		-- @param [table] List of sorted items for the category, sorted by name
-		function Item.by_category(category) 
-			return by_category[Type.STRING(category)] end
+		function Item.by_category(category)
+			return rawget(by_category, Type.STRING(category)) end
 		
-		-- @param [number] item_id In-game ID of the item
-		-- @param (optional) [number] spell_id In-game ID of the self-buff the item applies
-		-- @return [table] Item instance
-		function Item:new(item_id, spell_id)
-			local obj = new({ item_id = Type.NUMBER(item_id) })
-			if spell_id ~= nil then
-				obj.spell_id = Type.NUMBER(spell_id) end
-			by_id[item_id] = obj -- Allow reverse lookups
-			if not item_cached(item_id) then
-				pending_by_id[item_id] = true end
-			return obj
+		function Item.formalize()
+			categories = Stream:new(pairs, by_id)
+				:map(function(k, v) k, v.category end)
+				:unique(function(k, v) return v end)
+				:values():sorted():collect()
+			for _, items in pairs(by_category) do
+				sort(items, function(a, b) return a.name < b.name end) end
 		end
 
 		-- TSM addon can provide information of items across your whole account
@@ -580,52 +594,20 @@ local function main()
 		
 		-- @return [number] Quantity of the item in the player's bags
 		-- @return [number] Quantity of the item outside of the player's bags
-		function proto:get_supply()
+		function proto:supply()
 			local item_id = self.item_id
 			local bag_count = GetItemCount(item_id)
-			if select(4, proto:get_info()) then -- Soulbound?
+			if self.bound == true then -- Soulbound?
 				-- Don't count soulbound items from other characters
 				return bag_count, get_all_item_counts_wow(item_id) - bag_count end
 			return bag_count, get_all_item_counts(item_id) - bag_count
 		end
 
 		-- @param [number] size Size of the icon for the in-line string
+		-- @return [string] In-line icon string
 		function proto:icon(size)
-			local texture = select(3, self:get_info())
-			return format("|T%d:%d:%d|t", texture, Type.NUMBER(size), size)
-		end
-
-		-- Collects names of all items in the database and alphabetizes items
-		local function process_item_names()
-			for _, items in pairs(by_category) do
-				sort(items, function(a, b) return a:get_info() < b:get_info() end) end
-		end
-
-
-
-		-- Accepts a query response and/or queries the server for item information
-		-- @param [number] item_id Item ID of the response, or to query
-		-- @param (Optional) [boolean] success False if the item failed to be cached
-		function Item.cache(item_id, success)
-			if pending_by_id[Type.NUMBER(item_id)] == nil then return end
-			if success ~= false then query_item(item_id)
-			else Log.info(format("server failed to yield item info for i:%d", item_id)) end
-		end
-
-		local function init_database() -- If only WeakAuras allowed JSON files
-			
-
-			categories = Stream:new(pairs, item_dump)
-				:peek(function(k, v) 
-					for i, e in ipairs(v) do
-						category_by_item[e] = k end end)
-				:keys()
-				:sorted(function(a, b) return a < b end)
-				:collect()
-			by_category = item_dump -- Already in-form
-		end
+			return format("|T%d:%d:%d|t", self.texture, Type.NUMBER(size), size) end
 		
-		init_database()
 		return Item
 	end)()
 	
@@ -835,6 +817,7 @@ local function main()
 				for item_id in pending_ids.stream() do 
 					query_item(item_id) end
 				if pending_ids.size <= 0 then -- All items cached
+					Item.formalize()
 					strategy = true_fn
 					return true end
 				return false end
@@ -842,7 +825,9 @@ local function main()
 		end)()
 
 		-- @param [number] item_id Item ID to query the server
-		function Database.query(item_id) return query_item(Type.NUMBER(item_id)) end
+		function Database.query(item_id) 
+			if pending_ids[item_id] ~= nil then
+				return query_item(Type.NUMBER(item_id)) end end
 
 		return Database
 	end)()
