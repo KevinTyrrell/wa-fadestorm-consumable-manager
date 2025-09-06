@@ -146,13 +146,12 @@ local function main()
     -------------------------------- UTILS -------------------------------
     ----------------------------------------------------------------------
 
-	local function factory(x) return x end
+	local function factory(x) return function() return x end end
 	local function table_fn() return { } end
-	local function true_fn = factory(true)
-	local function nil_fn = factory()
 	local function identity_fn(...) return ... end
 	local function is_empty(t) return next(Type.TABLE(t)) == nil end
 	local function trim(s) return Type.STRING(s):match("^%s*(.-)%s*$") end
+	local true_fn, nil_fn = factory(true), factory()
 
 	local function clamp(x, a, b)
 		return max(min(Type.NUMBER(x), Type.NUMBER(b)), Type.NUMBER(a)) end
@@ -473,7 +472,7 @@ local function main()
 
 		local function init(iter, state)
 			local keys, values, indexes = { }, { }
-			if indexes == nil then
+			if iter ~= nil then
 				indexes = Stream:new(Type.FUNCTION(iter), state)
 					:peek(function(k, v) insert(keys, k); insert(values, v) end) -- Ordered
 					:collect() -- Copy the initial values
@@ -488,34 +487,34 @@ local function main()
 			return new({ keys = keys, values = values, indexes = indexes, size = #keys })
 		end
 
-		-- Iterates over all pairings in the map
-		-- @return [table] Stream instance
-		function proto:stream()
-			return Stream:new(ipairs, self.keys)
+		-- Returns an iterator for all pairings in the map
+		-- @return Iterator trio (iter, state, key)
+		function mt.__call(tbl)
+			return Stream:new(ipairs, tbl.keys)
 				:filter(function(k, v) return v ~= HOLE_SENTINEL end) -- Skip holes
-				:map(function(k, v) v, self.values[self.indexes[v]] end)
+				:map(function(k, v) return v, tbl.values[tbl.indexes[v]] end)()
 		end
 
-		function mt.__index(instance, key) -- Enable access by key
+		function mt.__index(tbl, key) -- Enable access by key
 			if key == nil then return end
-			local index = instance.indexes[key]
-			return instance.values[index]
+			local index = tbl.indexes[key]
+			return tbl.values[index]
 		end
 
-		function mt.__newindex(_, key, value) -- Enable pairing
-			local index = instance.indexes[key]
+		function mt.__newindex(tbl, key, value) -- Enable pairing
+			local index = tbl.indexes[key]
 			if index == nil then -- New key/value pairing
 				if value == nil then return end
-				insert(instance.keys, key)
-				insert(instance.values, value)
-				local size = instance.size + 1
-				instance.indexes[key] = size
-				instance.size = size
+				insert(tbl.keys, key)
+				insert(tbl.values, value)
+				local size = tbl.size + 1
+				tbl.indexes[key] = size
+				tbl.size = size
 			elseif value == nil then -- Pairing removal
-				instance.indexes[key] = nil
-				instance.keys[index] = HOLE_SENTINEL
-				instance.size = instance.size - 1
-			else instance.values[index] = value end -- Update value
+				tbl.indexes[key] = nil
+				tbl.keys[index] = HOLE_SENTINEL
+				tbl.size = tbl.size - 1
+			else tbl.values[index] = value end -- Update value
 		end
 
 		return LinkedMap
@@ -538,7 +537,7 @@ local function main()
 		-- @param [number] texture Icon ID of the item
 		-- @param (optional) [boolean] true if item is bind on pickup
 		-- @param (optional) [nubmer] aura_id In-game ID of aura the item applies
-		-- @return [table] Item instance
+		-- @return [table] Item tbl
 		function Item:new(item_id, name, category, link, texture, bound, aura_id)
 			local obj = new({
 				item_id = Type.NUMBER(item_id),
@@ -575,7 +574,7 @@ local function main()
 		
 		function Item.formalize()
 			categories = Stream:new(pairs, by_id)
-				:map(function(k, v) k, v.category end)
+				:map(function(k, v) return k, v.category end)
 				:unique(function(k, v) return v end)
 				:values():sorted():collect()
 			for _, items in pairs(by_category) do
@@ -808,19 +807,21 @@ local function main()
 			if name == nil then return end -- GetItemInfo can return nil at any time
 			local category, aura_id = cats[item_id], auras[item_id]
 			pending_ids[item_id], cats[item_id], auras[item_id] = nil, nil, nil
-			return Item:new(item_id, name, category, link, texture, bound, aura_id)
+			return Item:new(item_id, name, category, link, texture, bound == 1, aura_id)
 		end
 
 		-- @return [boolean] true if all items from the database are cached
 		Database.ready = (function(strategy)
 			strategy = function()
-				for item_id in pending_ids.stream() do 
+				for item_id in pending_ids() do
+					Type.NUMBER(item_id)
 					query_item(item_id) end
 				if pending_ids.size <= 0 then -- All items cached
 					Item.formalize()
 					strategy = true_fn
 					return true end
-				return false end
+				return false 
+			end
 			return function() return strategy() end
 		end)()
 
@@ -837,21 +838,15 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local Severity = (function()
-		local Symbol = (function()
-			local function repr() return self.color(self.code) end
-			local symbol_mt = { __call = repr, __tostring = repr }
-			return function(code, color)
-				return setmetatable({ code = code, color = color }, symbol_mt) end
-		end)
-		
-		local function make_severity(status, marker)
-			return { status = status, marker = marker } end
-		
-		local Severity = {
-			STABLE = make_severity(Symbol("OK", Palette.GREEN), Symbol("--", Palette.WHITE)),
-			WARNING = make_severity(Symbol("+?", Palette.YELLOW), Symbol("<<", Palette.CORAL)),
-			CRITICAL = make_severity(Symbol("NO", Palette.RED), Symbol(">>", Palette.ORANGE))
-		}
+		local Severity = (function()
+			local function make(status, marker) 
+				return { status = status, marker = marker } end
+			return Enum(function(e)
+				e.STABLE = make(Palette.GREEN("OK"), Palette.WHITE("--"))
+				e.WARNING = make(Palette.YELLOW("+?"), Palette.CORAL("<<"))
+				e.CRITICAL = make(Palette.RED("NO"), Palette.ORANGE(">>"))
+			end)
+		end)()
 		
 		local function severity_by_buff(aura_id, low_duration_thresh)
 			local duration, expire_ts = select(5, WA_GetUnitBuff(PLAYER, aura_id))
@@ -883,7 +878,7 @@ local function main()
 		function Severity:of_quantity(item, prefs)
 			local quantities = Type.TABLE(prefs).quantities
 			local req_quantity = quantities[Type.TABLE(item)]
-			local bags, elsewhere = item:get_supply()
+			local bags, elsewhere = item:supply()
 			if bags >= req_quantity then return Severity.STABLE end
 			if bags + elsewhere >= req_quantity then return Severity.WARNING end
 			return Severity.CRITICAL
@@ -893,8 +888,9 @@ local function main()
 		-- @param [table] marker Severity to be applied to the marker of the token
 		-- @return [string] Token signifying this severity combination
 		function Severity.token(status, marker)
-			marker = tostring(Type.TABLE(marker)) -- avoid double-calling tostring
-			return format("%s %s %s", marker, Type.TABLE(status), marker)
+			
+			marker = marker.marker
+			return format("%s %s %s", marker, status.status, marker)
 		end
 		
 		return Severity
@@ -911,8 +907,7 @@ local function main()
 		-- Returns true if the player is inside of a dungeon or raid
 		e.IN_DUNGEON_RAID = (function()
 			local z_types = { party = true, raid = true, scenario = true }
-			return function()
-				return z_types[(select(2, GetInstanceInfo()))] ~= nil end
+			return function() return z_types[(select(2, GetInstanceInfo()))] ~= nil end
 		end)()
 		-- Returns true if the player is currently in a city or inn
 		e.IN_RESTED_AREA = IsResting
@@ -1034,9 +1029,7 @@ local function main()
 			local rules = self.rules
 			return Stream:new(pairs, self.quantities)
 				:filter(function(k) return not Rule.any_passing(rules, k) end)
-				:keys()
-				:sorted(function(a, b) return (a:get_info()) < (b:get_info()) end)
-				:collect()
+				:keys():sorted(function(a, b) return a.name < b.name end):collect()
 		end
 		
 		return Preference
@@ -1048,16 +1041,13 @@ local function main()
 		local valid_items = Preference:get():filter_items()
 		-- List of sorted categories and map of sorted items by category
 		local categories = Stream:new(ipairs, valid_items)
-			:map(function(k, v) return k, v:category() end)
+			:map(function(k, v) return k, v.category end)
 			:unique(function(k, v) return v end)
-			:values()
-			:sorted(function(a, b) return a < b end)
-			:collect()
+			:values():sorted():collect()
 		local by_category = Stream:new(ipairs, categories)
-			:map(function(k, v) return v, { } end)
-			:collect()
+			:map(function(k, v) return v, { } end):collect()
 		for _, item in ipairs(valid_items) do
-			insert(by_category[item:category()], item) end
+			insert(by_category[item.category], item) end
 		return categories, by_category
 	end
 	
@@ -1116,8 +1106,7 @@ local function main()
 			return Stream:new(pairs, Palette)
 				:filter(function(k, v) return banned_colors[v] ~= true end)
 				:keys() -- Filter can damage list, reform indexes
-				-- Sort by color name for more consistent color patterns
-				:sorted(function(a, b) return a < b end)
+				:sorted() -- Sort by color name for more consistent color patterns
 				:map(function(k, v) return k, Palette[v] end)
 				:collect() -- Translate color strs to color objects
 		end
@@ -1218,11 +1207,9 @@ local function main()
     ----------------------------------------------------------------------
 	
 	local function handle_fcm_show()
-		if Item.ready() then -- Ensure all item are cached
-			Log.debug("Loading preferences.")
+		if Database.ready() then -- Ensure all item are cached
 			local prefs = Preference:new()
 			local categories, by_category = get_relevant_items()
-			Log.debug("Attempting to display.")
 			if is_empty(by_category) then return end -- No valid items
 
 			local display_block = Block:new(34)
@@ -1232,18 +1219,17 @@ local function main()
 					local status = Severity:of_quantity(item, prefs) -- Quantity health
 					local marker = Severity:of_duration(item, prefs) -- Buff duration health
 					local token = Severity.token(status, marker) -- Token to describe both
-					local name, link = item:get_info()
 
 					local line = StringBuilder:new(token, 8) -- +6 for token, +2 for spacing
 					-- length: +2 for icon size (estimation), +2 for '[]' link brackets
-					line:append(format("%s%s", item:icon(14), link), #name + 2 + 2)
+					line:append(format("%s%s", item:icon(14), item.link), #item.name + 2 + 2)
 					display_block:line(line:build(" "))
 				end
 			end
 			
 			aura_env.display = display_block:build("~", { Palette.GRAY })
 			return true
-		else Item.query(); Log.debug("Item db not ready.") end -- Server has to provide us all item data, retry
+		else Item.query() end -- Server has to provide us all item data, retry
 	end
 	
 	local function handle_fcm_hide() return false end
@@ -1256,8 +1242,8 @@ local function main()
     local event_handler = {
         ["FCM_SHOW"] = handle_fcm_show,
 		["FCM_HIDE"] = handle_fcm_hide,
-		["ITEM_DATA_LOAD_RESULT"] = Item.cache, -- ITEM_DATA_LOAD_RESULT is inconsistent
-		["GET_ITEM_INFO_RECEIVED"] = Item.cache,
+		["ITEM_DATA_LOAD_RESULT"] = Item.query, -- ITEM_DATA_LOAD_RESULT is inconsistent
+		["GET_ITEM_INFO_RECEIVED"] = Item.query,
     }
     
     -- Entry-point for triggers
@@ -1266,7 +1252,7 @@ local function main()
         if handler then return handler(...) end
     end
 
-	Item.query() -- Begin querying all missing items from the database
+	Database.ready() -- Begin querying all missing items from the database
 end
 
 main() -- Main method
