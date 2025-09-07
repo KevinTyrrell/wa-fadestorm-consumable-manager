@@ -615,6 +615,10 @@ local function main()
 
 		local pending_ids = LinkedMap:new() -- Set
 
+		-- TODO: Write the spellid which enchants the weapon to begin with
+		-- TODO: Provide a lookup from spell_id -> weapon_enhancement_id
+		-- TODO: Wrap spell_duration function such that it includes wep enhancements
+
 		local ITEM_DUMP = { -- Item ID, Aura ID
 			["Flask"] = {
 				{ 13510, 17626 }, -- Flask of the Titans
@@ -723,6 +727,7 @@ local function main()
 				{ 6372 }, -- Swim Speed Potion
 				{ 21519 }, -- Mistletoe
 				{ 184937 }, -- Chronoboon Displacer
+				{ 184938 }, -- Supercharged Chronoboon Displacer
 				{ 12384 }, -- Cache of Mau'ari
 				{ 21321 }, -- Red Qiraji Resonating Crystal
 				{ 21324 }, -- Yellow Qiraji Resonating Crystal
@@ -760,7 +765,6 @@ local function main()
 				{ 20079, 24382 }, -- Spirit of Zanza
 				{ 20080, 24417 }, -- Sheen of Zanza
 				{ 20081, 24383 }, -- Swiftness of Zanza
-				{ 184938 }, -- Supercharged Chronoboon Displacer
 			},
 			["Ammo"] = {
 				{ 12654 }, -- Doomshot
@@ -864,7 +868,7 @@ local function main()
 		-- @param [table] prefs Preferences instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item, prefs)
-			local aura_id = Type.TABLE(item).spell_id
+			local aura_id = Type.TABLE(item).aura_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
 			return severity_by_buff(aura_id, Type.TABLE(prefs).low_duration)
 		end
@@ -887,8 +891,7 @@ local function main()
 		-- @param [table] status Severity to be applied to the status of the token
 		-- @param [table] marker Severity to be applied to the marker of the token
 		-- @return [string] Token signifying this severity combination
-		function Severity.token(status, marker)
-			
+		function Severity:token(status, marker)
 			marker = marker.marker
 			return format("%s %s %s", marker, status.status, marker)
 		end
@@ -913,7 +916,7 @@ local function main()
 		e.IN_RESTED_AREA = IsResting
 		-- Returns true if the specified item has buffing capability
 		e.ITEM_YIELDS_BUFF = function(item)
-			return Type.TABLE(item).spell_id ~= nil end
+			return Type.TABLE(item).aura_id ~= nil end
 		-- Returns true if at least one of the item is in the player's inventory
 		e.ITEM_IN_INVENTORY = function(item)
 			return GetItemCount(Type.TABLE(item).item_id) > 0 end
@@ -1013,17 +1016,6 @@ local function main()
 			})
 		end
 		
-		-- Note: This function should not be called before `Item.ready`
-		-- @return [table] Retrieves the singleton preference instance
-		function Preference:get()
-			local instance = self.instance
-			if instance == nil then
-				instance = self:new()
-				self.instance = instance
-			end
-			return instance
-		end
-		
 		-- @return [table] List of items which the user wants to display
 		function proto:filter_items()
 			local rules = self.rules
@@ -1035,10 +1027,11 @@ local function main()
 		return Preference
 	end)()
 
+	-- @return [table] Preference instance
 	-- @return [table] Sorted list of categories
 	-- @return [table] Map sorted items by category
-	local function get_relevant_items()
-		local valid_items = Preference:get():filter_items()
+	local function get_relevant_items(prefs)
+		local valid_items = prefs:filter_items()
 		-- List of sorted categories and map of sorted items by category
 		local categories = Stream:new(ipairs, valid_items)
 			:map(function(k, v) return k, v.category end)
@@ -1202,55 +1195,71 @@ local function main()
 		return StringBuilder
 	end)()
 
-    ----------------------------------------------------------------------
-    --------------------------- EVENT HANDLERS  --------------------------
-    ----------------------------------------------------------------------
-	
-	local function handle_fcm_show()
-		if Database.ready() then -- Ensure all item are cached
-			local prefs = Preference:new()
-			local categories, by_category = get_relevant_items()
-			if is_empty(by_category) then return end -- No valid items
-
-			local display_block = Block:new(34)
+	-- @param [table] prefs Preference instance
+	-- @param [table] categories List of categories
+	-- @param [table] by_category Map[category, List[Item]]
+	-- @return [string] Constructed text block display
+	local generate_display = (function()
+		local BLOCK_LEN, TOKEN_LEN, ITEM_LEN_DX = 34, 8, 4
+		local ICON_SIZE, DIVIDER_CHAR, LINE_SEP = 14, "~", " "
+		local FORBIDDEN_COLORS = { Palette.GRAY }
+		return function(prefs, categories, by_category)
+			local display_block = Block:new(BLOCK_LEN)
 			for _, category in ipairs(categories) do
 				display_block:header(category)
 				for _, item in ipairs(by_category[category]) do
-					local status = Severity:of_quantity(item, prefs) -- Quantity health
-					local marker = Severity:of_duration(item, prefs) -- Buff duration health
-					local token = Severity.token(status, marker) -- Token to describe both
-
-					local line = StringBuilder:new(token, 8) -- +6 for token, +2 for spacing
-					-- length: +2 for icon size (estimation), +2 for '[]' link brackets
-					line:append(format("%s%s", item:icon(14), item.link), #item.name + 2 + 2)
-					display_block:line(line:build(" "))
+					local status = Severity:of_quantity(item, prefs) -- Quantity assessment
+					local marker = Severity:of_duration(item, prefs) -- Duration assessment
+					local token = Severity:token(status, marker) -- Token to symbolize both
+					-- Colored text yields invalid string lengths, so it must be hard-coded
+					local line = StringBuilder:new(token, TOKEN_LEN)
+					local content = item:icon(ICON_SIZE) .. item.link
+					line:append(content, #item.name + ITEM_LEN_DX)
+					display_block:line(line:build(LINE_SEP))
 				end
 			end
-			
-			aura_env.display = display_block:build("~", { Palette.GRAY })
-			return true
-		else Item.query() end -- Server has to provide us all item data, retry
+			return display_block:build(DIVIDER_CHAR, FORBIDDEN_COLORS)
+		end
+	end)()
+
+    ----------------------------------------------------------------------
+    --------------------------- EVENT HANDLERS  --------------------------
+    ----------------------------------------------------------------------
+
+	local load = (function(strategy)
+		strategy = function()
+			if not Database.ready() then Item.query(); return end
+			local prefs = Preference:new()
+			strategy = factory(prefs)
+			return prefs end
+		return function() return strategy() end
+	end)()
+	
+	local function handle_fcm_show()
+		local prefs = load()
+		if prefs == nil then return end
+		local categories, by_category = get_relevant_items(prefs)
+		if is_empty(by_category) then return
+			WeakAuras.ScanEvents("FCM_HIDE") end -- No valid items
+		aura_env.display = generate_display(prefs, categories, by_category)
+		return true
 	end
 	
-	local function handle_fcm_hide() return false end
-    
+	local handle_fcm_hide = true_fn -- Hide when called
+
     ----------------------------------------------------------------------
-    ----------------------------------------------------------------------
-    
-    local function DISABLED_SENTINEL() end -- Function for features which are disabled
-    -- Event handler for in-game events
-    local event_handler = {
-        ["FCM_SHOW"] = handle_fcm_show,
-		["FCM_HIDE"] = handle_fcm_hide,
-		["ITEM_DATA_LOAD_RESULT"] = Item.query, -- ITEM_DATA_LOAD_RESULT is inconsistent
-		["GET_ITEM_INFO_RECEIVED"] = Item.query,
-    }
-    
-    -- Entry-point for triggers
-    function aura_env.handle(event, ...)
-        local handler = event_handler[event]
-        if handler then return handler(...) end
-    end
+
+	local function make_handler(handlers)
+		return function(event, ...)
+			local handler = handlers[event]
+			if handler ~= nil then return handler(...) end end end
+
+	aura_env.trigger = make_handler({ FCM_SHOW = handle_fcm_show }) -- Triggers
+	aura_env.untrigger = make_handler({ FCM_HIDE = handle_fcm_hide }) -- Untriggers
+	aura_env.handle = make_handler({
+		GET_ITEM_INFO_RECEIVED = Database.query, -- GetItemInfo callback
+		ITEM_DATA_LOAD_RESULT = Database.query -- 'IDLR' is unreliable
+	})
 
 	Database.ready() -- Begin querying all missing items from the database
 end
