@@ -332,7 +332,17 @@ local function main()
 					return key, value
 				until false
 			end end
+
+		local function iterator(instance)
+			local source = instance.generator
+			return function()
+				repeat local k, v = source()
+					if k == nil then return end
+					return k, v
+				until false end end
 		
+		-- @param [function] factory Factory (e.g. ipairs, pairs) which must return a function
+		-- @param (Optional) [?] state State of the factory, to be used in factory(state)
 		function Stream:new(factory, state)
 			return new({ generator = init_generator(Type.FUNCTION(factory), state) }) end
 
@@ -377,8 +387,7 @@ local function main()
 		local exists_mt = { __mode = "k",
 			__index = function(tbl, key)
 				local value = rawget(tbl, key)
-				tbl[key] = true; return value end
-		}
+				tbl[key] = true; return value end }
 
 		-- Guarantees uniqueness of elements based on callback-defined identity
 		-- @param [function] callback | [?] function(k, v)
@@ -395,13 +404,27 @@ local function main()
 			return self
 		end
 
-		local function iterator(instance)
-			local source = instance.generator
-			return function()
-				repeat local k, v = source()
-					if k == nil then return end
-					return k, v
-				until false end end
+		-- Maps each element to a substream and flattens the results into a single stream
+		-- Callback is contracted such that it **must** return a Stream object
+		-- @param [function] callback | [table] function(k, v)
+		-- @return [table] Stream instance
+		function proto:flat_map(callback)
+			local source = self.generator, Type.FUNCTION(callback)
+			local substream, k, v
+			function self.generator() -- Hooking
+				while true do 
+					if substream == nil then
+						k, v = source(); if k == nil then return end
+						substream = Type.TABLE(callback(k, v))
+						if not Stream.is_instance(substream) then
+							type_check_strict("stream", substream) end
+						substream = iterator(substream)
+					end
+					k, v = substream(); if k ~= nil then return k, v end
+					substream = nil -- Exhausted
+				end end
+			return self
+		end
 
 		-- @return [function] iterator | [k, v] function()
 		mt.__call = iterator -- Call instance for iterator
@@ -413,7 +436,7 @@ local function main()
 		-- Associates values in the stream with `true`, forming a set
 		-- @return [table] Stream instance
 		function proto:set() return self:map(Mapping.SET) end
-			
+		
 		-- Converts the stream into an indexed stream of keys
 		-- @return [table] Stream instance
 		function proto:keys() return self:map(Mapping.KEYS) end
@@ -559,9 +582,7 @@ local function main()
 			categories = Stream:new(pairs, by_id)
 				:map(function(k, v) return k, v.category end)
 				:unique(function(k, v) return v end)
-				:values()
-				:sorted()
-				:collect()
+				:values():sorted():collect()
 			for _, items in pairs(by_category) do
 				sort(items, function(a, b) return a.name < b.name end) end
 		end
