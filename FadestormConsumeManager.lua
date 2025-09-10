@@ -308,146 +308,130 @@ local function main()
 	local Stream = (function()
 		local Stream, proto, new, mt = Class()
 
-		-- @param [function] Iteration function, e.g. 'pairs', 'ipairs', etc
-		-- @param (Optional) [?] state Table or variable passed into the iter
-		-- @return [table] Stream instance
-		function Stream:new(iter, state)
-			return new({
-				iter = Type.FUNCTION(iter),
-				state = state,
-				operations = { },
-				callbacks = { }
-			})
-		end
-
-		--[[ Stateless Stream Functions ]]--
-
-		local function map(k, v, callback) k, v = callback(k, v); return k, v end
-		local function peek(k, v, callback) callback(k, v); return k, v end
-
-		local function filter(k, v, callback)
-			if Type.BOOLEAN(callback(k, v)) == true then
-				return k, v end end
-
-		--[[ Stateful Stream Functions ]]--
-
-		local function unique_factory()
-			local distinct = setmetatable({ }, { __mode = "k" }) -- Weak Table
-			return function(k, v, callback)
-				local key = callback(k, v)
-				if distinct[key] == nil then
-					distinct[key] = true -- Mark that we've seen this mapping
-					return k, v
-				end
-			end
-		end
-		
-		--[[ Prebuilt Callback Functions ]]--
-
 		local Mapping = (function()
-			local function stateful(factory) return factory end
-			local function stateless(func) 
-				return function() return func end end
-			local mappings = {
-				invert = stateless(function(k, v) return v, k end),
-				set = stateless(function(k, v) return v, true end),
-				keys = stateful(function() local i = 0
-					return function(k, v) i = i + 1; return i, k end end),
-				values = stateful(function() local i = 0
-					return function(k, v) i = i + 1; return i, v end end),
-			}
-			return stringify_keys_table(function(key)
-				return mappings[key]() end) -- Call the factory to return the cb
+			local stateless = {
+				INVERT = function(k, v) return v, k end,
+				SET = function(k, v) return k, true end }
+			local stateful = {
+				KEYS = function() local i = 0; return function(k, v) 
+					i = i + 1; return i, k end end,
+				VALUES = function() local i = 0; return function(k, v)
+					i = i + 1; return i, v end end }
+			return index(function(_, key)
+				local fn = stateful[key]
+				if fn ~= nil then return fn() end
+				return stateless[key] end)
 		end)()
 
-		-- Executes all operations on a pairing, short-circuiting if nil
-		local function try_pair_ops(k, v, ops, cbs)
-			for i, op in ipairs(ops) do
-				k, v = op(k, v, cbs[i])
-				if k == nil or v == nil then return end end
-			return k, v
-		end
-
-		-- Returns an iterator that performs all operations and callbacks
-		local function iterator(instance)
-			local iter, state, last_key = instance.iter(instance.state)
-			Type.FUNCTION(iter) -- Mandatory
-			local ops, cbs, k, v = instance.operations, instance.callbacks
+		local function init_generator(factory, state)
+			local iter, key, value; iter, state, key = factory(state) -- Lua iterator trio
+			Type.FUNCTION(iter) -- contract: factory must return a function
 			return function()
-				repeat last_key, v = iter(state, last_key) -- Move source
-					if last_key == nil or v == nil then return end -- iter empty
-					k, v = try_pair_ops(last_key, v, ops, cbs)
-					if k ~= nil and v ~= nil then return k, v end
+				repeat key, value = iter(state, key)
+					if key == nil or value == nil then return end -- Exhausted
+					return key, value
 				until false
-			end
+			end end
+		
+		function Stream:new(factory, state)
+			return new({ generator = init_generator(Type.FUNCTION(factory), state) }) end
+
+		-- Filters out mappings unless their callback returns true
+		-- @param [function] callback | [boolean] function(k, v)
+		-- @return [table] Stream instance
+		function proto:filter(callback)
+			local source = self.generator, Type.FUNCTION(callback)
+			function self.generator() -- Hooking
+				repeat local k, v = source(); if k == nil then return end
+					if Type.BOOLEAN(callback(k, v)) then return k, v end
+				until false end
+			return self
 		end
 
-		local function inject_op(instance, op, cb)
-			insert(instance.operations, op)
-			insert(instance.callbacks, cb)
-			return instance
+		-- Mutates mappings into new pairs returned by the callback
+		-- @param [function] callback | [?, ?] function(k, v)
+		-- @return [table] Stream instance
+		function proto:map(callback)
+			local source = self.generator, Type.FUNCTION(callback)
+			function self.generator() -- Hooking
+				repeat local k, v = source(); if k == nil then return end
+					k, v = callback(k, v)
+					if k ~= nil and v ~= nil then return k, v end
+				until false end
+			return self
 		end
-
-		local function operation_factory(op)
-			return function(instance, callback)
-				return inject_op(instance, op, Type.FUNCTION(callback)) end
-		end
-
-		--[[ Accessing Stream Functions ]]--
 
 		-- Allows inspection of mappings during the stream
 		-- @param [function] callback | function(k, v)
-		-- @return [table] Instance
-		proto.peek = operation_factory(peek)
+		-- @return [table] Stream instance
+		function proto:peek(callback)
+			local source = self.generator, Type.FUNCTION(callback)
+			function self.generator() -- Hooking
+				repeat local k, v = source(); if k == nil then return end
+					callback(k, v); return k, v
+				until false end
+			return self
+		end
+
+		-- Returns true if an element has been queried before
+		local exists_mt = { __mode = "k",
+			__index = function(tbl, key)
+				local value = rawget(tbl, key)
+				tbl[key] = true; return value end
+		}
+
+		-- Guarantees uniqueness of elements based on callback-defined identity
+		-- @param [function] callback | [?] function(k, v)
+		-- @return [table] Stream instance
+		function proto:unique(callback)
+			local source = self.generator, Type.FUNCTION(callback)
+			local distinct = setmetatable({ }, exists_mt)
+			function self.generator() -- Hooking
+				repeat local k, v = source(); if k == nil then return end
+					local trait = callback(k, v)
+					if trait == nil then type_check_strict("object", trait) end -- Cannot be nil
+					if not distinct[trait] then return k, v end
+				until false end
+			return self
+		end
+
+		local function iterator(instance)
+			local source = instance.generator
+			return function()
+				repeat local k, v = source()
+					if k == nil then return end
+					return k, v
+				until false end end
 
 		-- @return [function] iterator | [k, v] function()
 		mt.__call = iterator -- Call instance for iterator
 
-		--[[ Mutating Stream Functions ]]--
-
-		-- Filters out mappings unless their callback returns true
-		-- @param [function] callback | [boolean] function(k, v)
-		-- @return [table] Instance
-		proto.filter = operation_factory(filter)
-
-		-- Mutates mappings into new pairs returned by the callback
-		-- @param [function] callback | [?, ?] function(k, v)
-		-- @return [table] Instance
-		proto.map = operation_factory(map)
-
-		-- Guarantees uniqueness of elements based on callback-defined identity
-		-- @param [function] callback | [?] function(k, v)
-		-- @return [table] Instance
-		function proto:unique(callback)
-			return inject_op(self, unique_factory(), Type.FUNCTION(callback)) end
-
 		-- Inverts mappings, swapping keys with values
-		-- @return [table] Instance
-		function proto:invert() return inject_op(self, map, Mapping.invert) end
+		-- @return [table] Stream instance
+		function proto:invert() return self:map(Mapping.INVERT) end
 			
 		-- Associates values in the stream with `true`, forming a set
-		-- @return [table] Instance
-		function proto:set() return inject_op(self, map, Mapping.set) end
+		-- @return [table] Stream instance
+		function proto:set() return self:map(Mapping.SET) end
 			
 		-- Converts the stream into an indexed stream of keys
-		-- @return [table] Instance
-		function proto:keys() return inject_op(self, map, Mapping.keys) end
+		-- @return [table] Stream instance
+		function proto:keys() return self:map(Mapping.KEYS) end
 			
 		-- Converts the stream into an indexed stream of values
-		-- @return [table] Instance
-		function proto:values() return inject_op(self, map, Mapping.values) end
+		-- @return [table] Stream instance
+		function proto:values() return self:map(Mapping.VALUES) end
 
 		-- Sorts the values in the stream using a custom comparator
 		-- @param [function] callback | [boolean] function(a, b)
-		-- @return [table] Instance
+		-- @return [table] Stream instance
 		function proto:sorted(callback)
 			local values = self:collect()
 			if callback ~= nil then Type.FUNCTION(callback) end
 			sort(values, callback)
-			return Stream:new(ipairs, values) -- Return brand-new stream
+			self.generator = init_generator(ipairs, values) -- Replace stream
+			return self
 		end
-
-		--[[ Collect Stream Functions ]]--
 		
 		-- TODO: Groupby
 
@@ -472,10 +456,9 @@ local function main()
 
 		local function init(iter, state)
 			local keys, values, indexes = { }, { }
-			if iter ~= nil then
-				indexes = Stream:new(Type.FUNCTION(iter), state)
-					:peek(function(k, v) insert(keys, k); insert(values, v) end) -- Ordered
-					:collect() -- Copy the initial values
+			if iter ~= nil then indexes = Stream:new(Type.FUNCTION(iter), state)
+				:peek(function(k, v) insert(keys, k); insert(values, v) end) -- Ordered
+				:collect() -- Copy the initial values
 			else indexes = { } end
 			return keys, values, indexes
 		end
@@ -576,7 +559,9 @@ local function main()
 			categories = Stream:new(pairs, by_id)
 				:map(function(k, v) return k, v.category end)
 				:unique(function(k, v) return v end)
-				:values():sorted():collect()
+				:values()
+				:sorted()
+				:collect()
 			for _, items in pairs(by_category) do
 				sort(items, function(a, b) return a.name < b.name end) end
 		end
@@ -614,10 +599,6 @@ local function main()
 		local Database = { }
 
 		local pending_ids = LinkedMap:new() -- Set
-
-		-- TODO: Write the spellid which enchants the weapon to begin with
-		-- TODO: Provide a lookup from spell_id -> weapon_enhancement_id
-		-- TODO: Wrap spell_duration function such that it includes wep enhancements
 
 		local ITEM_DUMP = { -- Item ID, Aura ID
 			["Flask"] = {
@@ -736,16 +717,21 @@ local function main()
 				{ 22754 }, -- Eternal Quintessence
 				{ 17333 }, -- Aqual Quintessence
 			},
+			-- Weapon enhancements are a special case with a lot of caveats
+			-- Format { item_id, enhancement_id, max_duration, max_charges }
 			["Enhancement"] = {
-				{ 3829 }, -- Frost Oil
-				{ 3824 }, -- Shadow Oil
-				{ 20749 }, -- Brilliant Wizard Oil
-				{ 20748 }, -- Brilliant Mana Oil
-				{ 23123 }, -- Blessed Wizard Oil
-				{ 23122 }, -- Consecrated Sharpening Stone
-				{ 18262 }, -- Elemental Sharpening Stone
-				{ 12404 }, -- Dense Sharpening Stone
-				{ 12643 }, -- Dense Weightstone
+				{ 3829, 26, 1800 }, -- Frost Oil
+				{ 3824, 25, 1800 }, -- Shadow Oil
+				{ 20749, 2628, 1800 }, -- Brilliant Wizard Oil
+				{ 20748, 2629, 1800 }, -- Brilliant Mana Oil
+				{ 23123, 2685, 3600 }, -- Blessed Wizard Oil
+				{ 23122, 2684, 3600 }, -- Consecrated Sharpening Stone
+				{ 18262, 2506, 1800 }, -- Elemental Sharpening Stone
+				{ 12404, 1643, 1800 }, -- Dense Sharpening Stone
+				{ 12643, 1703, 1800 }, -- Dense Weightstone
+				{ 20844, 2630, 1800, 120 }, -- Deadly Poison V
+				{ 8928, 625, 1800, 115 }, -- Instant Poison VI
+				{ 8927, 624, 1800, 100 }, -- Instant Poison V
 			},
 			["Explosive"] = {
 				{ 8956 }, -- Oil of Immolation
@@ -797,10 +783,15 @@ local function main()
 			}
 		}
 
+		-- TODO: Ditch cats & auras
+		-- TODO: Replace with just the original param table
+		-- TODO: Re-use the ITEM_DUMP variable by doing flat_map
+		-- TODO: Delete elements from ITEM_DUMP as item info comes in
+
 		local cats, auras = { }, { }
 		for category, tbl in pairs(ITEM_DUMP) do
 			for _, t in ipairs(tbl) do -- TODO: Implement flap map in stream
-				local item_id, aura_id = unpack(t)
+				local item_id, aura_id, enh_duration, enh_charges = unpack(t)
 				pending_ids[item_id] = true
 				cats[item_id], auras[item_id] = category, aura_id
 			end 
@@ -1228,7 +1219,7 @@ local function main()
 
 	local load = (function(strategy)
 		strategy = function()
-			if not Database.ready() then Item.query(); return end
+			if not Database.ready() then Database.query(); return end
 			local prefs = Preference:new()
 			strategy = factory(prefs)
 			return prefs end
@@ -1253,6 +1244,8 @@ local function main()
 		return function(event, ...)
 			local handler = handlers[event]
 			if handler ~= nil then return handler(...) end end end
+
+	-- TODO: use 'UNIT_INVENTORY_CHANGED' to trigger re-draws
 
 	aura_env.trigger = make_handler({ FCM_SHOW = handle_fcm_show }) -- Triggers
 	aura_env.untrigger = make_handler({ FCM_HIDE = handle_fcm_hide }) -- Untriggers
