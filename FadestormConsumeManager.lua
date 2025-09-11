@@ -468,6 +468,8 @@ local function main()
 
 		return Stream
 	end)()
+
+	Log.debug("Loading LinkedMap")
 	
     ----------------------------------------------------------------------
     ----------------------------- COLLECTIONS ----------------------------
@@ -526,6 +528,8 @@ local function main()
 
 		return LinkedMap
 	end)()
+
+	Log.debug("Loading Item")
 	
     ----------------------------------------------------------------------
     -------------------------------- ITEM --------------------------------
@@ -813,9 +817,15 @@ local function main()
 
 		ITEM_DUMP = Stream:new(pairs, ITEM_DUMP)
 			:flat_map(function(cat, t) return Stream:new(ipairs, t)
-				:map(function(k, v) return t[1], { cat, unpack(t, 2) } end) end)
-			:peek(function(k, v) pending_ids[k] = v end)
+				:map(function(k, v) return v[1], { cat, unpack(v, 2) } end) end)
+			:peek(function(k, v) Log.trace(format("Setting pending_ids: k=%s, v=%s", tostring(k), tostring(v))) pending_ids[k] = v end)
 			:filter(function() return false end):collect() -- garbage collect
+
+		Log.debug("Test Iteration")
+		for k, v in pending_ids() do
+			Log.trace(format("Test k=%s, v=%s", tostring(k), tostring(v)))
+		end
+		Log.debug("Test Iteration...done")
 
 		local function query_item(item_id)
 			local name, link, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(item_id)
@@ -830,6 +840,7 @@ local function main()
 			strategy = function()
 				for item_id in pending_ids() do
 					Type.NUMBER(item_id)
+					Log.trace(format("Iterating over: %s", tostring(item_id)))
 					query_item(item_id) end
 				if pending_ids.size <= 0 then -- All items cached
 					Item.formalize()
@@ -847,6 +858,8 @@ local function main()
 
 		return Database
 	end)()
+
+	Log.debug("Loading Severity")
 
     ----------------------------------------------------------------------
     -------------------------------- MODEL -------------------------------
@@ -903,7 +916,7 @@ local function main()
 			local DUAL_WIELD_CLASSES = Stream:new(ipairs, { 1, 3, 4 }):set():collect()
 			if not DUAL_WIELD_CLASSES[PLAYER_CLASS] then return mainhand_enhancement end
 			if PLAYER_CLASS ~= 3 and not PLAYER_FACTION and prefs.horde_wf == true then
-				return offhand_enhancement -- Horde Warrior/Rogue, ignore their mainhand
+				return offhand_enhancement end -- Horde Warrior/Rogue, ignore their mainhand
 			return dual_wield_enhancement -- Warrior/Hunter/Rogue, report worst weapon buff
 		end)()
 		
@@ -915,6 +928,7 @@ local function main()
 		function Severity:of_duration(item, prefs)
 			local aura_id = Type.TABLE(item).aura_id
 			if aura_id == nil then return self.STABLE end -- No duration => stable
+			if item.duration ~= nil then return severity_by_enhancement(item, prefs) end
 			return severity_by_buff(aura_id, Type.TABLE(prefs).low_duration)
 		end
 		
@@ -943,6 +957,8 @@ local function main()
 		
 		return Severity
 	end)()
+
+	Log.debug("Loading Predicate")
 	
 	--[[
 	Predicates
@@ -1013,6 +1029,8 @@ local function main()
 		
 		return Rule
 	end)()
+
+	Log.debug("Loading Preference")
 	
 	----------------------------------------------------------------------
     --------------------------- CUSTOM OPTIONS ---------------------------
@@ -1021,8 +1039,8 @@ local function main()
 	local Preference = (function()
 		local Preference, proto, new, mt = Class()
 
-		local C = aura_env.config; local profiles, rules, options = 
-			C.profile_grp.profiles, C.rule_grp.rules, c.OPTIONS
+		local cgf = aura_env.config; local profiles, rules, options = 
+			cgf.profile_grp.profiles, cgf.rule_grp.rules, cgf.options
 		
 		local function load_low_duration() 
 			return options.low_duration_thresh / 100 end
@@ -1095,6 +1113,8 @@ local function main()
     ----------------------------------------------------------------------
 	------------------------------ DISPLAY -------------------------------
     ----------------------------------------------------------------------
+
+	Log.debug("Loading Block")
 	
 	local function length_override(str, length)
 		if length == nil then  return Type.STRING(str), #str end
@@ -1286,6 +1306,7 @@ local function main()
 	local function handle_fcm_show()
 		local prefs = load()
 		if prefs == nil then return end
+		Log.debug("Loaded, attempting to display")
 		local categories, by_category = get_relevant_items(prefs)
 		if is_empty(by_category) then return
 			WeakAuras.ScanEvents("FCM_HIDE") end -- No valid items
@@ -1311,7 +1332,10 @@ local function main()
 		ITEM_DATA_LOAD_RESULT = Database.query -- 'IDLR' is unreliable
 	})
 
+	Log.debug("Querying entire database")
 	Database.ready() -- Begin querying all missing items from the database
+
+	Log.debug("Querying entire database...done")
 end
 
 main() -- Main method
