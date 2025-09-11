@@ -41,6 +41,9 @@ local function main()
 	local sort, insert, concat, remove = table.sort, table.insert, table.concat, table.remove
 
 	local Palette, Log -- Forward declaration
+
+	local PLAYER_CLASS = select(3, UnitClass(PLAYER))
+	local PLAYER_FACTION = UnitFactionGroup(PLAYER) == "Alliance"
 	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
@@ -870,38 +873,39 @@ local function main()
 			return Severity.STABLE
 		end
 
+		local function severity_by_weapon(item, prefs, exp_ms, charges, enh_id)
+			if enh_id ~= item.aura_id then return Severity.CRITICAL end
+			if exp_ms / 1000 / item.duration <= prefs.low_duration_thresh then
+				return Severity.WARNING end -- Low duration
+			if item.charges ~= nil and charges / item.charges <= prefs.low_duration_thresh then
+				return Severity.WARNING end -- Low remaining charges
+			return Severity.STABLE
+		end
+
+		-- Different check operations depending on which weapons we care for
+		local function mainhand_enhancement(item, prefs)
+			local _, exp_ms, charges, enh_id = GetWeaponEnchantInfo()
+			return severity_by_weapon(item, prefs, exp_ms, charges, enh_id) end
+
+		local function offhand_enhancement(item, prefs)
+			return severity_by_weapon(item, prefs, unpack(GetWeaponEnchantInfo(), 6)) end
+
+		local function dual_wield_enhancement(item, prefs) -- Get most severe of the two
+			local payload = { GetWeaponEnchantInfo() }
+			local mh = severity_by_weapon(item, prefs, unpack(payload, 2))
+			if mh == Severity.CRITICAL or GetInventoryItemID(PLAYER, 17) == nil then return mh end
+			local oh = severity_by_weapon(item, prefs, unpack(payload, 6))
+			if oh == Severity.CRITICAL or oh == Severity.WARNING then return oh_sev end
+			return mh -- Either 'WARNING' or 'STABLE'
+		end
+
 		local severity_by_enhancement = (function()
 			local DUAL_WIELD_CLASSES = Stream:new(ipairs, { 1, 3, 4 }):set():collect()
-		
-		
-		end)
-
-		local windfury_eligible = (function()
-			if UnitFactionGroup(PLAYER) ~= "Horde" then return nil_fn end
-			local WINDFURY_CLASSES = Stream:new(ipairs, { 1, 4 }):set():collect()
-			if not WINDFURY_CLASSES[select(3, UnitClass(PLAYER))] then return nil_fn end
-
+			if not DUAL_WIELD_CLASSES[PLAYER_CLASS] then return mainhand_enhancement end
+			if PLAYER_CLASS ~= 3 and not PLAYER_FACTION and prefs.horde_wf == true then
+				return offhand_enhancement -- Horde Warrior/Rogue, ignore their mainhand
+			return dual_wield_enhancement -- Warrior/Hunter/Rogue, report worst weapon buff
 		end)()
-		
-		
-		--[[
-		        None = 0
-        Warrior = 1
-        Paladin = 2
-        Hunter = 3
-        Rogue = 4
-        Priest = 5
-        DeathKnight = 6
-        Shaman = 7
-        Mage = 8
-        Warlock = 9
-        Monk = 10
-        Druid = 11
-        Demon Hunter = 12]]
-
-		local function severity_by_enhancement(item, prefs)
-
-		end
 		
 		-- Measures the severity of a consumable's remaining duration
 		-- Items that yield no buff always report STABLE
