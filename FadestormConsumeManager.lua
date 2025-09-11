@@ -311,7 +311,7 @@ local function main()
 		local Mapping = (function()
 			local stateless = {
 				INVERT = function(k, v) return v, k end,
-				SET = function(k, v) return k, true end }
+				SET = function(k, v) return v, true end }
 			local stateful = {
 				KEYS = function() local i = 0; return function(k, v) 
 					i = i + 1; return i, k end end,
@@ -455,8 +455,6 @@ local function main()
 			self.generator = init_generator(ipairs, values) -- Replace stream
 			return self
 		end
-		
-		-- TODO: Groupby
 
 		-- @return [table] Table of collected elements of the stream
 		function proto:collect()
@@ -542,9 +540,11 @@ local function main()
 		-- @param [string] link In-game hyperlink of the item
 		-- @param [number] texture Icon ID of the item
 		-- @param (optional) [boolean] true if item is bind on pickup
-		-- @param (optional) [nubmer] aura_id In-game ID of aura the item applies
-		-- @return [table] Item tbl
-		function Item:new(item_id, name, category, link, texture, bound, aura_id)
+		-- @param (optional) [number] aura_id In-game ID of aura the item applies
+		-- @param (optional) [number] duration Duration (secs) of weapon enhancements
+		-- @param (optional) [number] charges Total number of poison charges
+		-- @return [table] Item instance
+		function Item:new(item_id, name, category, link, texture, bound, aura_id, duration, charges)
 			local obj = new({
 				item_id = Type.NUMBER(item_id),
 				name = Type.STRING(name),
@@ -553,7 +553,13 @@ local function main()
 				texture = Type.NUMBER(texture),
 			})
 			if bound ~= nil then obj.bound = Type.BOOLEAN(bound) end
-			if aura_id ~= nil then obj.aura_id = Type.NUMBER(aura_id) end
+			if aura_id ~= nil then -- Item has a buff duration
+				obj.aura_id = Type.NUMBER(aura_id)
+				if duration ~= nil then -- Item is a weapon enhancement
+					obj.duration = Type.NUMBER(duration)
+					if charges ~= nil then -- Item is a rogue poison
+						obj.charges = Type.NUMBER(charges)
+					end end end
 			by_id[item_id], by_name[lower(name)] = obj, obj -- Reverse maps
 			insert(by_category[category], obj)
 			return obj
@@ -618,9 +624,7 @@ local function main()
 	
 	local Database = (function()
 		local Database = { }
-
-		local pending_ids = LinkedMap:new() -- Set
-
+		local pending_ids = LinkedMap:new()
 		local ITEM_DUMP = { -- Item ID, Aura ID
 			["Flask"] = {
 				{ 13510, 17626 }, -- Flask of the Titans
@@ -804,26 +808,18 @@ local function main()
 			}
 		}
 
-		-- TODO: Ditch cats & auras
-		-- TODO: Replace with just the original param table
-		-- TODO: Re-use the ITEM_DUMP variable by doing flat_map
-		-- TODO: Delete elements from ITEM_DUMP as item info comes in
-
-		local cats, auras = { }, { }
-		for category, tbl in pairs(ITEM_DUMP) do
-			for _, t in ipairs(tbl) do -- TODO: Implement flap map in stream
-				local item_id, aura_id, enh_duration, enh_charges = unpack(t)
-				pending_ids[item_id] = true
-				cats[item_id], auras[item_id] = category, aura_id
-			end 
-		end; ITEM_DUMP = nil -- Garbage collect
+		ITEM_DUMP = Stream:new(pairs, ITEM_DUMP)
+			:flat_map(function(cat, t) return Stream:new(ipairs, t)
+				:map(function(k, v) return t[1], { cat, unpack(t, 2) } end) end)
+			:peek(function(k, v) pending_ids[k] = v end)
+			:filter(function() return false end):collect() -- garbage collect
 
 		local function query_item(item_id)
 			local name, link, _, _, _, _, _, _, _, texture, _, _, _, bound = GetItemInfo(item_id)
 			if name == nil then return end -- GetItemInfo can return nil at any time
-			local category, aura_id = cats[item_id], auras[item_id]
-			pending_ids[item_id], cats[item_id], auras[item_id] = nil, nil, nil
-			return Item:new(item_id, name, category, link, texture, bound == 1, aura_id)
+			local category, aura_id, duration, charges = unpack(pending_ids[item_id])
+			pending_ids[item_id] = nil -- Mark this item as added to the database
+			return Item:new(item_id, name, category, link, texture, bound == 1, aura_id, duration, charges)
 		end
 
 		-- @return [boolean] true if all items from the database are cached
@@ -873,11 +869,44 @@ local function main()
 				return Severity.WARNING end
 			return Severity.STABLE
 		end
+
+		local severity_by_enhancement = (function()
+			local DUAL_WIELD_CLASSES = Stream:new(ipairs, { 1, 3, 4 }):set():collect()
+		
+		
+		end)
+
+		local windfury_eligible = (function()
+			if UnitFactionGroup(PLAYER) ~= "Horde" then return nil_fn end
+			local WINDFURY_CLASSES = Stream:new(ipairs, { 1, 4 }):set():collect()
+			if not WINDFURY_CLASSES[select(3, UnitClass(PLAYER))] then return nil_fn end
+
+		end)()
+		
+		
+		--[[
+		        None = 0
+        Warrior = 1
+        Paladin = 2
+        Hunter = 3
+        Rogue = 4
+        Priest = 5
+        DeathKnight = 6
+        Shaman = 7
+        Mage = 8
+        Warlock = 9
+        Monk = 10
+        Druid = 11
+        Demon Hunter = 12]]
+
+		local function severity_by_enhancement(item, prefs)
+
+		end
 		
 		-- Measures the severity of a consumable's remaining duration
 		-- Items that yield no buff always report STABLE
 		-- @param [table] item Item instance to check aura duration of
-		-- @param [table] prefs Preferences instance for low duration thresh
+		-- @param [table] prefs Preference instance for low duration thresh
 		-- @return [table] Severity instance, based on remaining duration
 		function Severity:of_duration(item, prefs)
 			local aura_id = Type.TABLE(item).aura_id
@@ -889,7 +918,7 @@ local function main()
 		-- If TSM is installed, supply of all your realm characters are considered
 		-- If TSM is not installed, supply of only bags and bank are considered
 		-- @param [table] item Item instance to check quantity of
-		-- @param [table] prefs Preferences instance for req quantities
+		-- @param [table] prefs Preference instance for req quantities
 		-- @return [table] Severity instance, based on available supply
 		function Severity:of_quantity(item, prefs)
 			local quantities = Type.TABLE(prefs).quantities
@@ -988,11 +1017,13 @@ local function main()
 	local Preference = (function()
 		local Preference, proto, new, mt = Class()
 
-		local config = aura_env.config
-		local options, profiles = config.options, config.profiles
+		local C = aura_env.config; local profiles, rules, options = 
+			C.profile_grp.profiles, C.rule_grp.rules, c.OPTIONS
 		
 		local function load_low_duration() 
 			return options.low_duration_thresh / 100 end
+
+		local function load_horde_WF() return options.horde_wf_enable == true end
 		
 		local function load_quantities()
 			local _, active_profile = next(profiles) -- Always loads top profile
@@ -1006,7 +1037,7 @@ local function main()
 		end
 		
 		local function load_rules()
-			return Stream:new(ipairs, options.rules)
+			return Stream:new(ipairs, rules)
 				:filter(function(k, v) return v.enable end)
 				:map(function(k, v)
 					return k, Stream:new(ipairs, v.conditions)
@@ -1025,6 +1056,7 @@ local function main()
 				rules = load_rules(),
 				quantities = load_quantities(),
 				low_duration = load_low_duration(),
+				horde_wf = load_horde_WF()
 			})
 		end
 		
@@ -1049,7 +1081,7 @@ local function main()
 			:map(function(k, v) return k, v.category end)
 			:unique(function(k, v) return v end)
 			:values():sorted():collect()
-		local by_category = Stream:new(ipairs, categories)
+		local by_category = Stream:new(ipairs, categories) -- TODO: Replace with 'group_by'
 			:map(function(k, v) return v, { } end):collect()
 		for _, item in ipairs(valid_items) do
 			insert(by_category[item.category], item) end
