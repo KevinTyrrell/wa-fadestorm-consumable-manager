@@ -744,6 +744,7 @@ local function main()
 				{ 21218 }, -- Blue Qiraji Resonating Crystal
 				{ 22754 }, -- Eternal Quintessence
 				{ 17333 }, -- Aqual Quintessence
+				{ 16309 }, -- Drakefire Amulet
 			},
 			-- Weapon enhancements are a special case with a lot of caveats
 			-- Format { item_id, enhancement_id, max_duration, max_charges }
@@ -794,7 +795,7 @@ local function main()
 				{ 20452, 24799 }, -- Smoked Desert Dumplings
 				{ 13931, 18194 }, -- Nightfin Soup
 				{ 18254, 22730 }, -- Runn Tum Tuber Surprise
-				{ 19318, 23698 }, -- Bottled Alterac Spring Water
+				{ 19318, 23697 }, -- Bottled Alterac Spring Water
 				{ 21023, 25661 }, -- Dirge's Kickin' Chimaerok Chops
 				{ 13813, 18141 }, -- Blessed Sunfruit Juice
 				{ 13810, 18125 }, -- Blessed Sunfruit
@@ -806,7 +807,6 @@ local function main()
 			},
 			["Equipment"] = {
 				{ 15138 }, -- Onyxia Scale Cloak
-				{ 16309 }, -- Drakefire Amulet
 				{ 810 }, -- Hammer of the Northern Wind
 				{ 10761 }, -- Coldrage Dagger
 			}
@@ -1248,7 +1248,7 @@ local function main()
 	-- @param [table] categories List of categories
 	-- @param [table] by_category Map[category, List[Item]]
 	-- @return [string] Constructed text block display
-	local generate_display = (function()
+	local make_display = (function()
 		local BLOCK_LEN, TOKEN_LEN, ITEM_LEN_DX = 34, 8, 4
 		local ICON_SIZE, DIVIDER_CHAR, LINE_SEP = 14, "~", " "
 		local FORBIDDEN_COLORS = { Palette.GRAY }
@@ -1290,7 +1290,7 @@ local function main()
 		local categories, by_category = get_relevant_items(prefs)
 		if is_empty(by_category) then return
 			WeakAuras.ScanEvents("FCM_HIDE") end -- No valid items
-		aura_env.display = generate_display(prefs, categories, by_category)
+		aura_env.display = make_display(prefs, categories, by_category)
 		return true
 	end
 	
