@@ -794,6 +794,7 @@ local function main()
 				{ 20452, 24799 }, -- Smoked Desert Dumplings
 				{ 13931, 18194 }, -- Nightfin Soup
 				{ 18254, 22730 }, -- Runn Tum Tuber Surprise
+				{ 19318, 23698 }, -- Bottled Alterac Spring Water
 				{ 21023, 25661 }, -- Dirge's Kickin' Chimaerok Chops
 				{ 13813, 18141 }, -- Blessed Sunfruit Juice
 				{ 13810, 18125 }, -- Blessed Sunfruit
