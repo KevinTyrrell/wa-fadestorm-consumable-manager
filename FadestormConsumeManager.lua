@@ -15,8 +15,13 @@
 --    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ]]--
 
--- TODO: Allow for item links to be pasted into custom options
--- TOOD: Implement weapon stone checking for mainhand and offhand
+-- TODO: Allow for item links or item ids to be pasted into custom options fields.
+-- TODO: Switch display to event driven updating rather than 'every frame'.
+-- TODO: Reduce block text size, or make text size dynamic to item count.
+-- TODO: Add new predicate for 'charater is max level'
+-- TODO: Add new predicate for 'item has desired supply'
+-- TODO: Add new rule { char_is_max, is_resting, item_has_desired_supply }
+-- TODO		this rule helps you mentally tick off items you've gotten ready
 
 local function main()
     ----------------------------------------------------------------------
@@ -809,6 +814,7 @@ local function main()
 				{ 15138 }, -- Onyxia Scale Cloak
 				{ 810 }, -- Hammer of the Northern Wind
 				{ 10761 }, -- Coldrage Dagger
+				{ 7717 }, -- Ravager
 			}
 		}
 
