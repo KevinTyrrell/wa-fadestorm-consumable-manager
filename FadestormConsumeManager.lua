@@ -1034,10 +1034,12 @@ local function main()
 			local _, active_profile = next(profiles) -- Always loads top profile
 			if active_profile == nil then return { } end -- No profiles
 			return Stream:new(ipairs, active_profile.consumes)
+				:map(function(k, v) return lower(trim(v.name)), v.req_quantity end)
+				:filter(function(k, v) return k ~= "" end) -- Ignore blank input boxes
 				:map(function(k, v)
-					local item = Item.by_name(lower(trim(v.name)))
-					if item == nil then Log.info("User Config | Unknown Item: " .. v.name) end
-					return item, v.req_quantity end)
+					local item = Item.by_name(k)
+					if item == nil then Log.info("User Config | Unknown Item: " .. k) end
+					return item, v end) -- nil items will be automatically filtered by 'map'
 				:collect()
 		end
 		
@@ -1295,6 +1297,15 @@ local function main()
 	end
 	
 	local handle_fcm_hide = true_fn -- Hide when called
+
+	--[[
+	-- TODO: FCM_SHOW
+	-- TODO:	- Event which controls 'show' trigger
+	-- TODO:	- Event triggers a re-draw
+	--
+	-- TODO: OPTIONS
+	-- TODO:	- Event triggers a re-draw if FCM_SHOW trigger is active
+	]]--
 
     ----------------------------------------------------------------------
 
