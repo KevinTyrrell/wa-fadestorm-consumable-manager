@@ -187,7 +187,7 @@ local function main()
 
 	-- @param [number] Amount of time between throttle successes to pass
 	-- @param (Optional) [number] init Timestamp of last throttle success
-	-- @return [function] throttle -- Returns true if enoguh time has elapsed
+	-- @return [function] throttle -- Returns true if enough time has elapsed
 	local function throttle_factory(span, init)
 		init = default.NUMBER(init, function() return GetTime() end)
 		Type.NUMBER(span); return function()
@@ -968,6 +968,7 @@ local function main()
 	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
 	[5] | ITEM_SUPPLY_HEALTHY: Returns true if supply of an item meets their preferences
 	[6] | PLAYER_MAX_LEVEL: Returns true if the player is max level
+	[7] | ITEM_IS_SOULBOUND: Returns true if the item is soulbound
 	]]--
 	local Predicate = Enum(function(e)
 		-- Returns true if the player is inside of a dungeon or raid
@@ -984,6 +985,7 @@ local function main()
 			local desired = Type.TABLE(prefs).quantities[Type.TABLE(item)]
 			return desired == nil or item:supply() >= desired end
 		e.PLAYER_MAX_LEVEL = function() return PLAYER_LEVEL >= MAX_LEVEL end
+		e.ITEM_IS_SOULBOUND = function(item) return item.bound == true end
 	end)
 	
 	-- Predicate wrapper
