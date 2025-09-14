@@ -16,10 +16,7 @@
 ]]--
 
 -- TODO: Allow for item links or item ids to be pasted into custom options fields.
--- TODO: Switch display to event driven updating rather than 'every frame'.
 -- TODO: Reduce block text size, or make text size dynamic to item count.
--- TODO: Add new predicate for 'charater is max level'
--- TODO: Add new predicate for 'item has desired supply'
 -- TODO: Add new rule { char_is_max, is_resting, item_has_desired_supply }
 -- TODO		this rule helps you mentally tick off items you've gotten ready
 
@@ -28,33 +25,32 @@ local function main()
     ---------------------------- INITIALIZING  ---------------------------
     ----------------------------------------------------------------------
 
+	-- Imports
+	local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
+	local max, min, floor = math.max, math.min, math.floor
+	local sort, insert, concat, remove = table.sort, table.insert, table.concat, table.remove
+	local Ticker, fire_event = C_Timer.NewTicker, WeakAuras.ScanEvents
+
 	--[[ Avoid loading listeners twice. Otherwise opening or closing character
 	frame causes multiple triggers of 'FCM_SHOW'/'FCM_HIDE', causing disaster]]--
 	local AURA_LOADED = "FCM_WEAK_AURA_LOADED"
 	if not _G[AURA_LOADED] then
 		-- Convert WoW API events into WeakAura triggers
-		CharacterFrame:HookScript("OnShow", function()
-			WeakAuras.ScanEvents("FCM_SHOW") end)
-		CharacterFrame:HookScript("OnHide", function()
-			WeakAuras.ScanEvents("FCM_HIDE") end)
-		_G[AURA_LOADED] = true
+		CharacterFrame:HookScript("OnShow", function() fire_event("FCM_SHOW") end)
+		CharacterFrame:HookScript("OnHide", function() fire_event("FCM_HIDE") end)
+		-- Double-dip on this variable to hold 'Ticker' singleton
+		_G[AURA_LOADED] = { Cancel = function() end }
 	end
-	
-	-- Imports
-	local srep, lower, format, upper = string.rep, string.lower, string.format, string.upper
-	local max, min, floor = math.max, math.min, math.floor
-	local sort, insert, concat, remove = table.sort, table.insert, table.concat, table.remove
 
-	local Palette, Log -- Forward declaration
-
+	local AURA_NAME = "Fadestorm Consumable Manager"
 	local PLAYER_CLASS = select(3, UnitClass(PLAYER))
+	local PLAYER_LEVEL, MAX_LEVEL = UnitLevel(PLAYER), 60
 	local PLAYER_FACTION = UnitFactionGroup(PLAYER) == "Alliance"
+	local Palette, Log -- Forward declaration
 	
 	----------------------------------------------------------------------
 	------------------------------- DEBUG --------------------------------
     ----------------------------------------------------------------------
-	
-	local AURA_NAME = "Fadestorm Consumable Manager"
 
 	local function type_mismatch(expected, actual)
 		Log.error(format("Type Mismatch | Expected=%s, Actual=%s", expected, actual)) end
@@ -187,6 +183,19 @@ local function main()
 		for _, n in ipairs(Type.TABLE(t)) do
 			s = s + Type.NUMBER(n) end
 		return s
+	end
+
+	-- @param [number] Amount of time between throttle successes to pass
+	-- @param (Optional) [number] init Timestamp of last throttle success
+	-- @return [function] throttle -- Returns true if enoguh time has elapsed
+	local function throttle_factory(span, init)
+		init = default.NUMBER(init, function() return GetTime() end)
+		Type.NUMBER(span); return function()
+			local t = GetTime()
+			if t - init >= span then
+				init = t; return true end -- Throttle reset
+			return false -- Reject
+		end
 	end
 	
 	-- @param (optional) [table] static Existing static members of the class
@@ -957,6 +966,8 @@ local function main()
 	[2] | IN_RESTED_AREA: Returns true if the player is in a city/inn
 	[3] | ITEM_YIELDS_BUFF: Returns true if the item can apply a buff
 	[4] | ITEM_IN_INVENTORY: Returns true if at item is in the player's bags
+	[5] | ITEM_SUPPLY_HEALTHY: Returns true if supply of an item meets their preferences
+	[6] | PLAYER_MAX_LEVEL: Returns true if the player is max level
 	]]--
 	local Predicate = Enum(function(e)
 		-- Returns true if the player is inside of a dungeon or raid
@@ -964,14 +975,15 @@ local function main()
 			local z_types = { party = true, raid = true, scenario = true }
 			return function() return z_types[(select(2, GetInstanceInfo()))] ~= nil end
 		end)()
-		-- Returns true if the player is currently in a city or inn
 		e.IN_RESTED_AREA = IsResting
-		-- Returns true if the specified item has buffing capability
 		e.ITEM_YIELDS_BUFF = function(item)
 			return Type.TABLE(item).aura_id ~= nil end
-		-- Returns true if at least one of the item is in the player's inventory
 		e.ITEM_IN_INVENTORY = function(item)
-			return GetItemCount(Type.TABLE(item).item_id) > 0 end
+			return Type.TABLE(item):supply() > 0 end
+		e.ITEM_SUPPLY_HEALTHY = function(item, prefs)
+			local desired = Type.TABLE(prefs).quantities[Type.TABLE(item)]
+			return desired == nil or item:supply() >= desired end
+		e.PLAYER_MAX_LEVEL = function() return PLAYER_LEVEL >= MAX_LEVEL end
 	end)
 	
 	-- Predicate wrapper
@@ -1077,7 +1089,7 @@ local function main()
 		function proto:filter_items()
 			local rules = self.rules
 			return Stream:new(pairs, self.quantities)
-				:filter(function(k) return not Rule.any_passing(rules, k) end)
+				:filter(function(k) return not Rule.any_passing(rules, k, self) end)
 				:keys():sorted(function(a, b) return a.name < b.name end):collect()
 		end
 		
@@ -1279,58 +1291,73 @@ local function main()
 		end
 	end)()
 
+	local STD_DISPLAY = (function()
+		local icon = "|T134877:14:14|t"
+		return format("%s %s %s", icon, Palette.TURQUOISE(AURA_NAME), icon) end)()
+
+	local MAX_DRAW_FREQUENCY = 1.5 -- Controls how fast the aura can re-draw
+
     ----------------------------------------------------------------------
     --------------------------- EVENT HANDLERS  --------------------------
     ----------------------------------------------------------------------
 
-	local load = (function(strategy)
+	local init_prerequisites = (function(strategy)
 		strategy = function()
-			if not Database.ready() then Database.query(); return end
+			if not Database.ready() then return end
 			local prefs = Preference:new()
 			strategy = factory(prefs)
 			return prefs end
 		return function() return strategy() end
 	end)()
-	
-	local function handle_fcm_show()
-		local prefs = load()
-		if prefs == nil then return end
-		local categories, by_category = get_relevant_items(prefs)
-		if is_empty(by_category) then return
-			WeakAuras.ScanEvents("FCM_HIDE") end -- No valid items
-		aura_env.display = make_display(prefs, categories, by_category)
-		return true
-	end
-	
-	local handle_fcm_hide = true_fn -- Hide when called
 
-	--[[
-	-- TODO: FCM_SHOW
-	-- TODO:	- Event which controls 'show' trigger
-	-- TODO:	- Event triggers a re-draw
-	--
-	-- TODO: OPTIONS
-	-- TODO:	- Event triggers a re-draw if FCM_SHOW trigger is active
-	]]--
+	local handle_draw = (function()
+		local throttle = throttle_factory(MAX_DRAW_FREQUENCY)
+		return function()
+			local prefs = init_prerequisites() -- Query missing items
+			if prefs == nil or not aura_env.active or not throttle() then return true end
+			local categories, by_category = get_relevant_items(prefs)
+			if not is_empty(by_category) then
+				aura_env.display = make_display(prefs, categories, by_category)
+			else aura_env.display = STD_DISPLAY end -- Leave blank if no items
+			return true -- Re-draw was successful, refresh the display
+		end
+	end)()
 
     ----------------------------------------------------------------------
+
+	local function request_redraw() fire_event("FCM_DRAW") end -- Triggers a display refresh
+
+	local function handle_trigger_fcm_show() 
+		aura_env.active = true
+		_G[AURA_LOADED]:Cancel() -- Cancel existing ticker
+		_G[AURA_LOADED] = Ticker(MAX_DRAW_FREQUENCY, request_redraw)
+		return true 
+	end
+
+	local function handle_trigger_fcm_hide()
+		aura_env.active = false
+		_G[AURA_LOADED]:Cancel() -- Cancel existing ticker
+		return true
+	end
 
 	local function make_handler(handlers)
 		return function(event, ...)
 			local handler = handlers[event]
 			if handler ~= nil then return handler(...) end end end
 
-	-- TODO: use 'UNIT_INVENTORY_CHANGED' to trigger re-draws
+	-- Controls visibiltiy of aura & signaling of visibility to other triggers
+	aura_env.trigger = make_handler({ FCM_SHOW = handle_trigger_fcm_show })
+	aura_env.untrigger = make_handler({ FCM_HIDE = handle_trigger_fcm_hide })
+	-- Attempts to re-draw the display, if conditions permit
+	aura_env.draw = make_handler({
+		FCM_SHOW = handle_draw, FCM_DRAW = handle_draw, OPTIONS = handle_draw, 
+		BAG_UPDATE = handle_draw, PLAYER_UPDATE_RESTING = handle_draw })
+	-- Adds item data to the database, queried peacemeal from the server
+	aura_env.query = make_handler({ GET_ITEM_INFO_RECEIVED = Database.query })
 
-	aura_env.trigger = make_handler({ FCM_SHOW = handle_fcm_show }) -- Triggers
-	aura_env.untrigger = make_handler({ FCM_HIDE = handle_fcm_hide }) -- Untriggers
-	aura_env.handle = make_handler({
-		GET_ITEM_INFO_RECEIVED = Database.query, -- GetItemInfo callback
-		ITEM_DATA_LOAD_RESULT = Database.query -- 'IDLR' is unreliable
-	})
-
+	if aura_env.display == nil then aura_env.display = STD_DISPLAY end
+	if aura_env.active == nil then aura_env.active = false end
 	Database.ready() -- Begin querying all missing items from the database
 end
 
 main() -- Main method
-
