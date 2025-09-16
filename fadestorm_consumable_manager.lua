@@ -17,8 +17,8 @@
 
 -- TODO: Allow for item links or item ids to be pasted into custom options fields.
 -- TODO: Reduce block text size, or make text size dynamic to item count.
--- TODO: Add new rule { char_is_max, is_resting, item_has_desired_supply }
--- TODO		this rule helps you mentally tick off items you've gotten ready
+-- TODO: Ensure that TSM inventory check doesn't account for auctions
+-- TODO: Rename WA option 'Negate' to 'Negate Condition'
 
 local function main()
     ----------------------------------------------------------------------
