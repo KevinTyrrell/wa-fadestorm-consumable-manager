@@ -41,12 +41,13 @@
 
 ### ❖ Profiles ❖
 
-- Create a new profile with a memorable name, e.g. `Myhunter: AQ40`.
+- **Profiles allow you to switch your desired consumable list.**
 - *Note: The loaded profile is always the first profile in the list. To re-arrange profiles, click the △/▽ Arrows.*
-- For each profile, provide names of items and the desired quantity to be brought for each item. *e.g. `Major Mana Potion`, `10`*
-- Switching between profiles allows for flexibility. For example you could add `Onyxia Scale Cloak` to a profile meant for Blackwing Lair.
-- The profile *only encompasses items/quantities*. No other settings are affected.
-
+- Recommendation: Create profiles with a meaningful name, e.g. `Myhunter: AQ40`.
+- Provide names of items and the desired quantity to be brought for each item. *e.g. `Major Mana Potion`, `10`. Some equipment and mounts are supported.*
+- *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
+- Switching between profiles allows for flexibility. For example you could add `Onyxia Scale Cloak` to a profile meant for *Blackwing Lair*.
+- *Note: For a list of all supported items, [consult the table here](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/blob/0e3ef6a60f6684147251e8b40b30f001a457173c/fadestorm_consumable_manager.lua#L640). For missing items of merit, [create an issue here](#-issues-).*
 
 ---
 
@@ -57,17 +58,19 @@
 * Rules consist of a list of `conditions`, each of which is evaluated against an item. If all conditions evaluate to `true` for a given item, *that item will be hidden from the display at that moment*.
 * *Note: A rule can be enabled/disabled at any time by toggling the Rule Enabled checkbox.*
 
-
 #### Conditions
+
 - *A condition can be negated/inverted by toggling the `Negate Condition` checkbox.*
-- List of available conditions:
-    * | `In Dungeon/Raid` | `true` if the player is currently in a dungeon/raid.
-    * | `In Rested Area` | `true` if the player is in a major city or inn.
-    * | `Item Yields Buff` | `true` if the item can apply a long-standing aura. Items whose buffs cannot be continuously refreshed are not included (e.g. `Mighty Rage Potion`).
-    * | `Item In Inventory` | `true` if the player's bags contain at least one of the item.
-    * | `Item Supply Healthy` | `true` if the player's bags meet the preferred supply of the item.
-    * | `Player Max Level` | `true` if the player's character is max level.
-    * | `Item Is Soulbound` | `true` if the item cannot be traded.
+
+| Condition | Description |
+|-----------|-------------|
+| `In Dungeon/Raid` | `true` if the player is currently in a dungeon/raid |
+| `In Rested Area` | `true` if the player is in a major city or inn |
+| `Item Yields Buff` | `true` if the item can apply a long-standing aura. Items whose buffs cannot be continuously refreshed are not included (e.g. `Mighty Rage Potion`) |
+| `Item In Inventory` | `true` if the player's bags contain at least one of the item |
+| `Item Supply Healthy` | `true` if the player's bags meet the preferred supply of the item |
+| `Player Max Level` | `true` if the player's character is max level |
+| `Item Is Soulbound` | `true` if the item cannot be traded |
 
 #### Suggested Rules
 
