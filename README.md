@@ -42,10 +42,10 @@
 ### ❖ Profiles ❖
 
 - **Profiles allow you to switch your desired consumable list.**
-- *Note: The loaded profile is always the first profile in the list. To re-arrange profiles, click the △/▽ Arrows.*
-- Recommendation: Create profiles with a meaningful name, e.g. `Myhunter: AQ40`.
+    - *Note: The loaded profile is always the first profile in the list. To re-arrange profiles, click the △/▽ Arrows.*
+- Recommendation: Create profiles with meaningful names, e.g. `Myhunter: AQ40`.
 - Provide names of items and the desired quantity to be brought for each item. *e.g. `Major Mana Potion`, `10`. Some equipment and mounts are supported.*
-- *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
+    - *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
 - Switching between profiles allows for flexibility. For example you could add `Onyxia Scale Cloak` to a profile meant for *Blackwing Lair*.
 - *Note: For a list of all supported items, [consult the table here](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/blob/0e3ef6a60f6684147251e8b40b30f001a457173c/fadestorm_consumable_manager.lua#L640). For missing items of merit, [create an issue here](#-issues-).*
 
@@ -91,21 +91,9 @@ The following rules should be included in the WA import by default. Users are fr
 
 ## ⚙ Screenshots ⚙
 
-<div align="center" style="width: 90%; margin: 0 auto;">
-  <div style="display: flex; gap: 5px; align-items: stretch;">
-    <div style="flex: 0 0 45%; padding: 5px;">
-      <img width="100%" src="res/config-screenshot.png" alt="Configuration Screenshot" style="display: block;">
-    </div>
-    <div style="flex: 0 0 55%; padding: 5px; display: flex; flex-direction: column; gap: 5px;">
-      <div style="padding: 5px;">
-        <img width="100%" src="res/healer-rule-screenshot.png" alt="Healer Rule Screenshot" style="display: block;">
-      </div>
-      <div style="padding: 5px;">
-        <img width="100%" src="res/dps-rule-screenshot.png" alt="DPS Rule Screenshot" style="display: block;">
-      </div>
-    </div>
-  </div>
-</div>
+* ##### [ex. Configuration](res/config-screenshot.png)
+* ##### [ex. Healer In-Raid](res/healer-rule-screenshot.png)
+* ##### [ex. DPS In-Raid](res/dps-rule-screenshot.png)
 
 ---
 
