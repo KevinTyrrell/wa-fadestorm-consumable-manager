@@ -91,19 +91,21 @@ The following rules should be included in the WA import by default. Users are fr
 
 ## ⚙ Screenshots ⚙
 
-*Healer in raid, with default rules enabled. Zanza elixir low duration & all other consumables need to be applied.*
-
-<p align="center">
-    <img width="550" src="res/healer-rule-screenshot.png" alt="Healer Rule Screenshot">
-    <br>
-</p>
-
-*Melee in raid, with default rules enabled. All consumables yet to be applied.*
-
-<p align="center">
-    <img width="550" src="res/dps-rule-screenshot.png" alt="Healer Rule Screenshot">
-    <br>
-</p>
+<div align="center" style="width: 90%; margin: 0 auto;">
+  <div style="display: flex; gap: 5px; align-items: stretch;">
+    <div style="flex: 0 0 45%; padding: 5px;">
+      <img width="100%" src="res/config-screenshot.png" alt="Configuration Screenshot" style="display: block;">
+    </div>
+    <div style="flex: 0 0 55%; padding: 5px; display: flex; flex-direction: column; gap: 5px;">
+      <div style="padding: 5px;">
+        <img width="100%" src="res/healer-rule-screenshot.png" alt="Healer Rule Screenshot" style="display: block;">
+      </div>
+      <div style="padding: 5px;">
+        <img width="100%" src="res/dps-rule-screenshot.png" alt="DPS Rule Screenshot" style="display: block;">
+      </div>
+    </div>
+  </div>
+</div>
 
 ---
 
