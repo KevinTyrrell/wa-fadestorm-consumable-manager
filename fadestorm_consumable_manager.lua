@@ -15,11 +15,6 @@
 --    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ]]--
 
--- TODO: Allow for item links or item ids to be pasted into custom options fields.
--- TODO: Reduce block text size, or make text size dynamic to item count.
--- TODO: Ensure that TSM inventory check doesn't account for auctions
--- TODO: Rename WA option 'Negate' to 'Negate Condition'
-
 local function main()
     ----------------------------------------------------------------------
     ---------------------------- INITIALIZING  ---------------------------

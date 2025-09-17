@@ -25,6 +25,7 @@
 ### ▲ Display ▲
 
 * Attaches to the bottom of the character frame; only displaying when open.
+* Display refreshes automatically while character pane is open *(every `1.5` seconds or upon certain events)*.
 * Automatically grows/shrinks the frame depending on the text content.
 * Each of the profile's consumables (if not hidden by a `rule`) will have one of each symbol:
     * **Quantity**
@@ -87,16 +88,51 @@ The following rules should be included in the WA import by default. Users are fr
 
 ## ⚙ Screenshots ⚙
 
+*Healer in raid, with default rules enabled. Zanza elixir low duration & all other consumables need to be applied.*
+
+<p align="center">
+    <img width="550" src="res/healer-rule-screenshot.png" alt="Healer Rule Screenshot">
+    <br>
+</p>
+
+*Melee in raid, with default rules enabled. All consumables yet to be applied.*
+
+<p align="center">
+    <img width="550" src="res/dps-rule-screenshot.png" alt="Healer Rule Screenshot">
+    <br>
+</p>
+
 ---
 
 ## ⧻ Import ⧻
 
 [![WeakAuras Import](https://img.shields.io/badge/Import-Latest%20Release-green)](../../releases/latest/download/wa-fcm-import.txt)
 
+##### [Latest Release](../../releases/latest)
+
 ---
 
 ## ❂ Issues ❂
 
-Found a bug? Have a feature request? Please [create an issue](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/issues/new) to help improve the WeakAura.
+Found a bug? Have a feature request? Please [create an issue](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/issues/new).
+
+---
+
+## ⌾ Changelog ⌾
+
+* **v1.0.0** (Initial Release)
+    - Text display, automatic refresh/show/hide
+    - `rule` system implemented to reduce bloat
+
+---
+
+## ⎈ TODO ⎈
+
+- [ ] Allow *item links* or *item ids* to be read in custom options fields.
+- [ ] Dynamically adjust text & icon sizes.
+- [ ] Move internal lib functions to a seperate library WA.
+- [ ] Customizable display refresh rate.
+- [ ] Rename `Negate` to `Negate Condition` in custom options.
+- [ ] New `condition`: `Item Buff Healthy`, `true` if the item's buff is applied with a healthy duration.
 
 ---
