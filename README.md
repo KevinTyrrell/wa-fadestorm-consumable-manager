@@ -125,7 +125,6 @@ Found a bug? Have a feature request? Please [create an issue](https://github.com
 - [ ] Dynamically adjust text & icon sizes.
 - [ ] Move internal lib functions to a seperate library WA.
 - [ ] Customizable display refresh rate.
-- [ ] Rename `Negate` to `Negate Condition` in custom options.
 - [ ] New `condition`: `Item Buff Healthy`, `true` if the item's buff is applied with a healthy duration.
 
 ---

@@ -905,7 +905,7 @@ local function main()
 			local mh = severity_by_weapon(item, prefs, unpack(payload, 2))
 			if mh == Severity.CRITICAL or GetInventoryItemID(PLAYER, 17) == nil then return mh end
 			local oh = severity_by_weapon(item, prefs, unpack(payload, 6))
-			if oh == Severity.CRITICAL or oh == Severity.WARNING then return oh_sev end
+			if oh == Severity.CRITICAL or oh == Severity.WARNING then return oh end
 			return mh -- Either 'WARNING' or 'STABLE'
 		end
 
