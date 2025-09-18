@@ -44,8 +44,9 @@
 - **Profiles allow you to switch your desired consumable list.**
     - *Note: The loaded profile is always the first profile in the list. To re-arrange profiles, click the △/▽ Arrows.*
 - Recommendation: Create profiles with meaningful names, e.g. `Myhunter: AQ40`.
-- Provide names of items and the desired quantity to be brought for each item. *e.g. `Major Mana Potion`, `10`. Some equipment and mounts are supported.*
-    - *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
+- For each desired consumable, either drag/drop the item into the `consumable` box, type the item's name (case insensitive), or item id.
+- Provide the minimum desired quantity of said item to be brought.
+    * *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
 - Switching between profiles allows for flexibility. For example you could add `Onyxia Scale Cloak` to a profile meant for *Blackwing Lair*.
 - *Note: For a list of all supported items, [consult the table here](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/blob/0e3ef6a60f6684147251e8b40b30f001a457173c/fadestorm_consumable_manager.lua#L640). For missing items of merit, [create an issue here](#-issues-).*
 
@@ -121,7 +122,7 @@ Found a bug? Have a feature request? Please [create an issue](https://github.com
 
 ## ⎈ TODO ⎈
 
-- [ ] Allow *item links* or *item ids* to be read in custom options fields.
+- [X] Allow *item links* or *item ids* to be read in custom options fields.
 - [ ] Dynamically adjust text & icon sizes.
 - [ ] Move internal lib functions to a seperate library WA.
 - [ ] Customizable display refresh rate.

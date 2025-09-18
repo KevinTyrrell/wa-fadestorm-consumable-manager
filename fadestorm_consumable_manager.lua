@@ -588,6 +588,15 @@ local function main()
 		-- @return [table] Corresponding Item instance, or nil if DNE
 		function Item.by_id(item_id) return by_id[Type.NUMBER(item_id)] end
 
+		-- @param [?] item_handle Either the item's id, link, or name
+		-- @return [table] Corresponding Item instance, or nil if DNE
+		function Item.by_flex(item_handle)
+			if check.NUMBER(item_handle) then return Item.by_id(item_handle) end
+			local item_id = tonumber(Type.STRING(item_handle):match("item:(%d+):"))
+			if item_id ~= nil then return Item.by_id(item_id) end -- Valid item link
+			return Item.by_name(lower(item_handle))
+		end
+
 		-- @return [table] List of sorted category names
 		function Item.categories() return categories end
 
@@ -1049,10 +1058,10 @@ local function main()
 			local _, active_profile = next(profiles) -- Always loads top profile
 			if active_profile == nil then return { } end -- No profiles
 			return Stream:new(ipairs, active_profile.consumes)
-				:map(function(k, v) return lower(trim(v.name)), v.req_quantity end)
+				:map(function(k, v) return trim(v.name), v.req_quantity end)
 				:filter(function(k, v) return k ~= "" end) -- Ignore blank input boxes
 				:map(function(k, v)
-					local item = Item.by_name(k)
+					local item = Item.by_flex(tonumber(k) or k) -- ID, Link, or Name
 					if item == nil then Log.info("User Config | Unknown Item: " .. k) end
 					return item, v end) -- nil items will be automatically filtered by 'map'
 				:collect()
