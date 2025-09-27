@@ -809,6 +809,7 @@ local function main()
 				{ 15997 }, -- Thorium Shells
 			},
 			["Food"] = {
+				{ 12217, 15852 }, -- Dragonbreath Chili
 				{ 13928, 18192 }, -- Grilled Squid
 				{ 20452, 24799 }, -- Smoked Desert Dumplings
 				{ 13931, 18194 }, -- Nightfin Soup
@@ -828,6 +829,7 @@ local function main()
 				{ 810 }, -- Hammer of the Northern Wind
 				{ 10761 }, -- Coldrage Dagger
 				{ 7717 }, -- Ravager
+				{ 9449 }, -- Manual Crowd Pummeler
 			}
 		}
 
