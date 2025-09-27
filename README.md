@@ -48,14 +48,14 @@
 - Provide the minimum desired quantity of said item to be brought.
     * *Note: Profiles only include items/quantities pairs. No other settings are profile-specific.*
 - Switching between profiles allows for flexibility. For example you could add `Onyxia Scale Cloak` to a profile meant for *Blackwing Lair*.
-- *Note: For a list of all supported items, [consult the table here](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/blob/0e3ef6a60f6684147251e8b40b30f001a457173c/fadestorm_consumable_manager.lua#L640). For missing items of merit, [create an issue here](#-issues-).*
+- *Note: For a list of all supported items, [consult the table here](https://github.com/KevinTyrrell/wa-fadestorm-consumable-manager/blob/46c737ae322adc936a379279d8b37c200465378a/fadestorm_consumable_manager.lua#L650). For missing items of merit, [create an issue here](#-issues-).*
 
 ---
 
 ### ⦿ Rules ⦿
 
 
-* **Rules allow fine control over when items are to-be hidden**, as [large volumes of tracked items can yield an unwieldy display](res/ruleless-screenshot.png) otherwise.
+* **Rules allow fine control over when items are to-be hidden**, as [large volumes of tracked items can yield an unwieldy display](https://raw.githubusercontent.com/KevinTyrrell/wa-fadestorm-consumable-manager/refs/heads/master/res/ruleless-screenshot.png) otherwise.
 * Rules consist of a list of `conditions`, each of which is evaluated against an item. If all conditions evaluate to `true` for a given item, *that item will be hidden from the display at that moment*.
 * *Note: A rule can be enabled/disabled at any time by toggling the Rule Enabled checkbox.*
 
@@ -92,9 +92,9 @@ The following rules should be included in the WA import by default. Users are fr
 
 ## ⚙ Screenshots ⚙
 
-* ##### [ex. Configuration](res/config-screenshot.png)
-* ##### [ex. Healer In-Raid](res/healer-rule-screenshot.png)
-* ##### [ex. DPS In-Raid](res/dps-rule-screenshot.png)
+* ##### [ex. Configuration](https://raw.githubusercontent.com/KevinTyrrell/wa-fadestorm-consumable-manager/refs/heads/master/res/config-screenshot.png)
+* ##### [ex. Healer In-Raid](https://raw.githubusercontent.com/KevinTyrrell/wa-fadestorm-consumable-manager/refs/heads/master/res/healer-rule-screenshot.png)
+* ##### [ex. DPS In-Raid](https://raw.githubusercontent.com/KevinTyrrell/wa-fadestorm-consumable-manager/refs/heads/master/res/dps-rule-screenshot.png)
 
 ---
 
